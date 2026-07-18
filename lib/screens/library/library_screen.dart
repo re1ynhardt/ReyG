@@ -97,21 +97,37 @@ class LibraryScreen extends StatelessWidget {
               ],
             ),
           ),
-          ...library.playlists.map(
-            (p) => ListTile(
+          ...library.playlists.map((p) {
+            // Playlists have no cover art of their own until the user sets
+            // one explicitly (cover_url stays ''), so fall back to the
+            // cover of the most recently added track instead of a plain
+            // gray box.
+            var displayCover = p.coverUrl;
+            if (displayCover.isEmpty && p.trackIds.isNotEmpty) {
+              final lastTrackId = p.trackIds.last;
+              final match = library.tracks.where((t) => t.id == lastTrackId);
+              if (match.isNotEmpty) displayCover = match.first.coverUrl;
+            }
+            return ListTile(
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: p.coverUrl.isEmpty
-                    ? Container(width: 48, height: 48, color: Theme.of(context).cardColor)
-                    : Image.network(p.coverUrl, width: 48, height: 48, fit: BoxFit.cover),
+                child: displayCover.isEmpty
+                    ? Container(
+                        width: 48,
+                        height: 48,
+                        color: Theme.of(context).cardColor,
+                        alignment: Alignment.center,
+                        child: Icon(Icons.music_note, size: 20, color: Theme.of(context).hintColor),
+                      )
+                    : Image.network(displayCover, width: 48, height: 48, fit: BoxFit.cover),
               ),
               title: Text(p.name),
               subtitle: Text('${p.trackIds.length} tracks'),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => PlaylistDetailScreen(playlistId: p.id)),
               ),
-            ),
-          ),
+            );
+          }),
         ],
       ),
     );

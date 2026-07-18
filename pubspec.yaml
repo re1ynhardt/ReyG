@@ -1,5 +1,5 @@
 name: audio_player_app
-description: "Apple Music–style audio player frontend (Flutter) with mock backend."
+description: "flutter audio player with back playback and back on the flut"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -58,4 +58,4 @@ flutter_launcher_icons:
   image_path: "assets/icon/icon.png"
   # Optional: adaptive icon for Android 8+ (nicer round/square masking)
   adaptive_icon_background: "#000000"
-  adaptive_icon_foreground: "assets/icon/icon.png"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
