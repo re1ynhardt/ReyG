@@ -26,6 +26,12 @@ class MockApiService implements ApiService {
     'user@example.com': 'password123',
   };
 
+  @override
+  void restoreSession(AppUser user) {
+    // No-op: the mock backend keeps everything in memory for the demo and
+    // doesn't need a token to know who's "current".
+  }
+
   void _seed() {
     const samples = [
       'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',

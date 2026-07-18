@@ -15,6 +15,12 @@ abstract class ApiService {
     required String displayName,
   });
 
+  /// Called once after a session is restored from local storage (app
+  /// reopened, user already logged in previously) so the backend knows
+  /// who's "current" without requiring another login. Implementations
+  /// that don't need this (e.g. the mock) can leave it a no-op.
+  void restoreSession(AppUser user);
+
   // --- Tracks -----------------------------------------------------------
   Future<List<Track>> fetchTracks();
   Future<List<Track>> searchTracks(String query);

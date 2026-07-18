@@ -31,6 +31,7 @@ class AuthProvider extends ChangeNotifier {
     final raw = prefs.getString(_kUserKey);
     if (raw != null) {
       _user = AppUser.fromJson(jsonDecode(raw));
+      _api.restoreSession(_user!);
       _status = AuthStatus.authenticated;
     } else {
       _status = AuthStatus.unauthenticated;

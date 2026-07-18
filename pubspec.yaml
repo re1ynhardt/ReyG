@@ -24,8 +24,12 @@ dependencies:
   # Local storage / cache (recently played, tokens, settings)
   shared_preferences: ^2.2.3
 
-  # Networking (used later to talk to the real Python backend)
+  # Networking — used to talk directly to Yandex Object Storage's
+  # S3-compatible API (see lib/services/yandex_storage_api_service.dart).
   http: ^1.2.1
+
+  # HMAC-SHA256 for signing requests to Yandex Object Storage (AWS SigV4).
+  crypto: ^3.0.3
 
   # Picking audio/cover files for the in-app developer uploader
   file_picker: ^8.0.0+1

@@ -43,6 +43,11 @@ class RemoteApiService implements ApiService {
   Uri _u(String path) => Uri.parse('$baseUrl$path');
 
   @override
+  void restoreSession(AppUser user) {
+    authToken = user.token;
+  }
+
+  @override
   Future<AppUser> login({required String email, required String password}) async {
     final res = await http.post(_u('/auth/login'),
         headers: _headers, body: jsonEncode({'email': email, 'password': password}));

@@ -6,7 +6,7 @@ class AppStrings {
 
   static const Map<String, Map<String, String>> _t = {
     en: {
-      'app_name': 'Harmony',
+      'app_name': 'ReynMusic',
       'login': 'Log In',
       'register': 'Sign Up',
       'email': 'Email',
@@ -55,7 +55,7 @@ class AppStrings {
       'liked_songs': 'Liked Songs',
     },
     ru: {
-      'app_name': 'Harmony',
+      'app_name': 'ReynMusic',
       'login': 'Войти',
       'register': 'Регистрация',
       'email': 'Email',

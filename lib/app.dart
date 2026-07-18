@@ -29,7 +29,7 @@ class HarmonyApp extends StatelessWidget {
         builder: (context, appState, _) {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
-            title: 'Harmony',
+            title: 'ReyMusic',
             themeMode: appState.themeMode,
             theme: AppTheme.light,
             darkTheme: AppTheme.dark,

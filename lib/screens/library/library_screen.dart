@@ -7,6 +7,7 @@ import '../../providers/player_provider.dart';
 import '../../widgets/track_list_tile.dart';
 import '../admin/upload_screen.dart';
 import 'playlist_detail_screen.dart';
+import 'playlist_picker_sheet.dart';
 
 class LibraryScreen extends StatelessWidget {
   const LibraryScreen({super.key});
@@ -157,6 +158,14 @@ class _SimpleTrackListScreen extends StatelessWidget {
                   track: track,
                   isPlaying: player.currentTrack?.id == track.id,
                   onTap: () => player.playQueue(List.from(tracks), startIndex: i),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.more_vert),
+                    onPressed: () => showModalBottomSheet(
+                      context: context,
+                      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                      builder: (_) => PlaylistPickerSheet(track: track),
+                    ),
+                  ),
                 );
               },
             ),
