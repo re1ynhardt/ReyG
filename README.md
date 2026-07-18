@@ -1,9 +1,6 @@
-# Harmony — Apple Music–style Flutter frontend
+# ReyG — Apple Music–style Flutter frontend
 
-Полностью рабочий UI аудиоплеера в стиле Apple Music. Сейчас подключён
-**мок-бэкенд** (`lib/services/mock_api_service.dart`) с тестовыми треками
-(публичные mp3 SoundHelix) и заглушками обложек — приложение запускается
-и полностью работает без какого-либо сервера.
+ReyG - полностью рабочий UI аудиоплеера. В данный момент используется мок-бекэнд. (lib/services/mock_api_service.dart)
 
 ## Что реализовано
 
