@@ -178,6 +178,18 @@ class MockApiService implements ApiService {
   }
 
   @override
+  Future<void> deleteTrack(String trackId) async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    _tracks.removeWhere((t) => t.id == trackId);
+    _favoriteIds.remove(trackId);
+    for (var i = 0; i < _playlists.length; i++) {
+      _playlists[i] = _playlists[i].copyWith(
+        trackIds: _playlists[i].trackIds.where((id) => id != trackId).toList(),
+      );
+    }
+  }
+
+  @override
   Future<List<Playlist>> fetchPlaylists() async {
     await Future.delayed(_networkDelay);
     return List.unmodifiable(_playlists);

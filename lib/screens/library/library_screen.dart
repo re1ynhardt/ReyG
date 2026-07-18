@@ -119,7 +119,13 @@ class LibraryScreen extends StatelessWidget {
                         alignment: Alignment.center,
                         child: Icon(Icons.music_note, size: 20, color: Theme.of(context).hintColor),
                       )
-                    : Image.network(displayCover, width: 48, height: 48, fit: BoxFit.cover),
+                    : Image.network(
+                        displayCover,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        cacheWidth: (48 * MediaQuery.of(context).devicePixelRatio).round(),
+                      ),
               ),
               title: Text(p.name),
               subtitle: Text('${p.trackIds.length} tracks'),

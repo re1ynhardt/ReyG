@@ -30,6 +30,12 @@ class TrackListTile extends StatelessWidget {
           width: dense ? 44 : 52,
           height: dense ? 44 : 52,
           fit: BoxFit.cover,
+          // Without this, Flutter decodes the FULL original image into
+          // memory (e.g. a 2000x2000 cover) just to show a 50px thumbnail.
+          // Scrolling through hundreds/thousands of tracks like that is
+          // exactly what eats RAM and can crash the app. Capping the
+          // decode size to roughly what's actually on screen fixes it.
+          cacheWidth: ((dense ? 44 : 52) * MediaQuery.of(context).devicePixelRatio).round(),
           errorBuilder: (_, __, ___) => Container(
             width: dense ? 44 : 52,
             height: dense ? 44 : 52,

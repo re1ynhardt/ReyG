@@ -149,4 +149,21 @@ class LibraryProvider extends ChangeNotifier {
     notifyListeners();
     return track;
   }
+
+  /// Developer-only. Removes the track everywhere at once: the main
+  /// catalog, every playlist that contained it, and every favorites list
+  /// (including the current user's) — all three surfaces the person asked
+  /// about (Home, Search, Favorites) read from the same [_tracks] /
+  /// [_favoriteIds] / [_playlists] state, so one call here updates all of
+  /// them immediately without needing a full reload.
+  Future<void> deleteTrack(String trackId) async {
+    await _api.deleteTrack(trackId);
+    _tracks = _tracks.where((t) => t.id != trackId).toList();
+    _favoriteIds.remove(trackId);
+    _playlists = _playlists
+        .map((p) => p.copyWith(trackIds: p.trackIds.where((id) => id != trackId).toList()))
+        .toList();
+    _searchResults = _searchResults.where((t) => t.id != trackId).toList();
+    notifyListeners();
+  }
 }

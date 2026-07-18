@@ -5,6 +5,7 @@ import '../../providers/app_state.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/track_list_tile.dart';
+import '../library/playlist_picker_sheet.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -79,6 +80,14 @@ class _SearchScreenState extends State<SearchScreen> {
                         track: track,
                         isPlaying: player.currentTrack?.id == track.id,
                         onTap: () => player.playQueue(library.searchResults, startIndex: i),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.more_vert),
+                          onPressed: () => showModalBottomSheet(
+                            context: context,
+                            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                            builder: (_) => PlaylistPickerSheet(track: track),
+                          ),
+                        ),
                       );
                     },
                   ),

@@ -52,6 +52,10 @@ class AppStrings {
       'empty_favorites': 'No favorites yet',
       'empty_recent': 'Nothing played yet',
       'delete_playlist': 'Delete Playlist',
+      'delete_track': 'Delete Track',
+      'delete_track_confirm': 'Delete this track for everyone? This can\'t be undone.',
+      'delete': 'Delete',
+      'track_deleted': 'Track deleted',
       'liked_songs': 'Liked Songs',
     },
     ru: {
@@ -101,6 +105,10 @@ class AppStrings {
       'empty_favorites': 'Пока нет избранного',
       'empty_recent': 'Пока ничего не прослушано',
       'delete_playlist': 'Удалить плейлист',
+      'delete_track': 'Удалить трек',
+      'delete_track_confirm': 'Удалить этот трек для всех? Это действие необратимо.',
+      'delete': 'Удалить',
+      'track_deleted': 'Трек удалён',
       'liked_songs': 'Любимые треки',
     },
   };

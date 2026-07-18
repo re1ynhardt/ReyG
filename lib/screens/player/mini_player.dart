@@ -49,6 +49,7 @@ class MiniPlayer extends StatelessWidget {
                         width: 40,
                         height: 40,
                         fit: BoxFit.cover,
+                        cacheWidth: (40 * MediaQuery.of(context).devicePixelRatio).round(),
                         errorBuilder: (_, __, ___) => Container(
                           width: 40,
                           height: 40,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/track.dart';
 import '../../providers/app_state.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/library_provider.dart';
 
 class PlaylistPickerSheet extends StatelessWidget {
@@ -11,6 +12,7 @@ class PlaylistPickerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
+    final isDeveloper = context.watch<AuthProvider>().isDeveloper;
     final isFav = library.isFavorite(track.id);
     return SafeArea(
       child: Column(
@@ -56,10 +58,52 @@ class PlaylistPickerSheet extends StatelessWidget {
               }
             },
           ),
+          if (isDeveloper) ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: Text(context.tr('delete_track'), style: const TextStyle(color: Colors.red)),
+              onTap: () => _confirmAndDelete(context, library),
+            ),
+          ],
           const SizedBox(height: 8),
         ],
       ),
     );
+  }
+
+  Future<void> _confirmAndDelete(BuildContext context, LibraryProvider library) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(ctx.tr('delete_track')),
+        content: Text(ctx.tr('delete_track_confirm')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ctx.tr('cancel'))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(ctx.tr('delete'), style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    // Close the picker sheet first so the confirmation flow doesn't stack
+    // on top of the (possibly slow, network-bound) delete call.
+    if (context.mounted) Navigator.pop(context);
+
+    try {
+      await library.deleteTrack(track.id);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(context.tr('track_deleted'))));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
   }
 
   Future<String?> _promptName(BuildContext context) {

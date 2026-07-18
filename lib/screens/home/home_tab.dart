@@ -106,6 +106,7 @@ class _CoverCard extends StatelessWidget {
                 width: 140,
                 height: 140,
                 fit: BoxFit.cover,
+                cacheWidth: (140 * MediaQuery.of(context).devicePixelRatio).round(),
                 errorBuilder: (_, __, ___) => Container(
                   width: 140,
                   height: 140,

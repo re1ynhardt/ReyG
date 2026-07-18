@@ -57,6 +57,12 @@ class NowPlayingScreen extends StatelessWidget {
                       track.coverUrl,
                       fit: BoxFit.cover,
                       width: double.infinity,
+                      // Only one of these is on screen at a time, but
+                      // uploaded covers can be large — cap decoding so a
+                      // 3000x3000 cover doesn't get fully decoded just to
+                      // fill a phone-width box.
+                      cacheWidth: (MediaQuery.of(context).size.width * MediaQuery.of(context).devicePixelRatio)
+                          .round(),
                       errorBuilder: (_, __, ___) => Container(
                         color: Theme.of(context).cardColor,
                         child: const Icon(Icons.music_note, size: 80),

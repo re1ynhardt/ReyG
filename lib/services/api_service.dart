@@ -35,6 +35,11 @@ abstract class ApiService {
     String? localCoverPath,
   });
 
+  /// Developer-only: permanently removes a track from the catalog (and,
+  /// where possible, the underlying audio/cover files too), plus every
+  /// reference to it in playlists and favorites, everywhere in the app.
+  Future<void> deleteTrack(String trackId);
+
   // --- Playlists --------------------------------------------------------
   Future<List<Playlist>> fetchPlaylists();
   Future<Playlist> createPlaylist(String name);

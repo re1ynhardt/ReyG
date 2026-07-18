@@ -379,6 +379,83 @@ class YandexStorageApiService implements ApiService {
 
   Track _trackFromRow(Map<String, dynamic> row) => Track.fromJson(row);
 
+  /// Developer-only. Removes the track from the catalog, strips it out of
+  /// every playlist and every user's favorites, and best-effort deletes
+  /// the underlying audio/cover objects from storage so they don't sit
+  /// around forever as orphaned files.
+  @override
+  Future<void> deleteTrack(String trackId) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only developer accounts can delete tracks');
+    }
+
+    String? audioUrl;
+    String? coverUrl;
+    await _withCollection(_tracksKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final idx = items.indexWhere((r) => (r as Map)['id'] == trackId);
+      if (idx == -1) throw ApiException('Track not found');
+      final row = items[idx] as Map<String, dynamic>;
+      audioUrl = row['audio_url'] as String?;
+      coverUrl = row['cover_url'] as String?;
+      items.removeAt(idx);
+      return null;
+    });
+
+    // Pull it out of every playlist that referenced it.
+    await _withCollection(_playlistsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      for (final p in items) {
+        final trackIds = ((p as Map)['track_ids'] as List).cast<String>();
+        trackIds.removeWhere((id) => id == trackId);
+      }
+      return null;
+    });
+
+    // Pull it out of every user's favorites too.
+    await _withCollection(_favoritesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.removeWhere((r) => (r as Map)['track_id'] == trackId);
+      return null;
+    });
+
+    // Best-effort cleanup of the actual files — metadata is already gone
+    // either way, so a failure here shouldn't surface as an error to the UI.
+    for (final url in [audioUrl, coverUrl]) {
+      final key = _keyFromPublicUrl(url);
+      if (key == null) continue;
+      try {
+        await _deleteObject(key);
+      } catch (_) {
+        // Non-fatal.
+      }
+    }
+  }
+
+  /// Turns a public URL this service generated (see [_uploadMediaFile])
+  /// back into an S3 object key, e.g.
+  /// "https://storage.yandexcloud.net/my-bucket/media/audio/xyz.mp3"
+  /// -> "media/audio/xyz.mp3".
+  String? _keyFromPublicUrl(String? url) {
+    if (url == null || url.isEmpty) return null;
+    final marker = '/${config.bucket}/';
+    final idx = url.indexOf(marker);
+    if (idx == -1) return null;
+    return Uri.decodeComponent(url.substring(idx + marker.length));
+  }
+
+  Future<void> _deleteObject(String key) async {
+    final path = _objectPath(key);
+    final headers = _signer.signedHeaders(method: 'DELETE', canonicalPath: path, body: const []);
+    final res = await http.delete(_uri(key), headers: headers);
+    // S3 returns 204 on success and (per spec) also on "already gone" —
+    // only treat genuine failures as errors.
+    if (res.statusCode >= 400 && res.statusCode != 404) {
+      throw ApiException('Yandex Storage DELETE failed (${res.statusCode}): ${res.body}');
+    }
+  }
+
   // --- Playlists --------------------------------------------------------
   @override
   Future<List<Playlist>> fetchPlaylists() async {

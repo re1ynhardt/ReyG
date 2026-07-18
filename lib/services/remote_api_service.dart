@@ -110,6 +110,12 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<void> deleteTrack(String trackId) async {
+    final res = await http.delete(_u('/tracks/$trackId'), headers: _headers);
+    _throwIfError(res);
+  }
+
+  @override
   Future<List<Playlist>> fetchPlaylists() async {
     final res = await http.get(_u('/playlists'), headers: _headers);
     _throwIfError(res);

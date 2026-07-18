@@ -30,7 +30,7 @@ Future<void> main() async {
       accessKeyId: 'YCAJE0POvQbcWw9VSrNflht9s',
       secretAccessKey: 'YCMtrMWWbFX6UB-_dO4VuNa2cAnIBZJvemoAkWic',
       bucket: 'storagereyg',
-      developerEmails: {'ussr9covok@gmail.com', 'anastasiyasklyarova3091@gmail.com'},
+      developerEmails: {'ussr9covok@gmail.com', 'anastasiyasklyarova3091@gmail.com', 'nubik2881@gmail.com'},
     ),
   );
 
