@@ -1,19 +1,38 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import '../models/track.dart';
+import 'harmony_audio_handler.dart';
 
-/// Thin wrapper around [AudioPlayer] that also feeds `just_audio_background`
-/// so play/pause/seek/next/prev work from the lock screen and the
-/// notification shade (requirement #9), without any extra native code
-/// beyond the manifest tweaks described in the README.
+/// Thin facade over [HarmonyAudioHandler] that keeps the exact same public
+/// API the rest of the app (PlayerProvider, screens) already relies on —
+/// so switching from `just_audio_background` to a full `audio_service`
+/// AudioHandler (needed for a real repeat button in the notification)
+/// didn't require touching any other file.
 class AudioPlayerService {
-  AudioPlayerService._internal();
-  static final AudioPlayerService instance = AudioPlayerService._internal();
+  AudioPlayerService._internal(this.handler);
 
-  final AudioPlayer player = AudioPlayer();
-  List<Track> _queue = [];
+  /// Set once in `main()` via [init], before `runApp()`. Every other part
+  /// of the app reads the ready singleton through [instance].
+  static late final AudioPlayerService instance;
 
-  List<Track> get queue => _queue;
+  /// Initializes audio_service + our custom handler. Must be awaited in
+  /// `main()` before `runApp()`.
+  static Future<void> init() async {
+    final handler = await AudioService.init(
+      builder: () => HarmonyAudioHandler(),
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'com.harmony.app.audio',
+        androidNotificationChannelName: 'Harmony playback',
+        androidNotificationOngoing: true,
+      ),
+    );
+    instance = AudioPlayerService._internal(handler);
+  }
+
+  final HarmonyAudioHandler handler;
+  AudioPlayer get player => handler.player;
+
+  List<Track> get queue => handler.tracks;
 
   Stream<Duration> get positionStream => player.positionStream;
   Stream<Duration?> get durationStream => player.durationStream;
@@ -21,66 +40,43 @@ class AudioPlayerService {
   Stream<bool> get playingStream => player.playingStream;
   Stream<ProcessingState> get processingStateStream =>
       player.playerStateStream.map((s) => s.processingState);
+  Stream<LoopMode> get loopModeStream => player.loopModeStream;
 
   int? get currentIndex => player.currentIndex;
   bool get isPlaying => player.playing;
-  Track? get currentTrack =>
-      (currentIndex != null && currentIndex! >= 0 && currentIndex! < _queue.length)
-          ? _queue[currentIndex!]
-          : null;
+  LoopMode get loopMode => player.loopMode;
+  Track? get currentTrack => handler.currentTrack;
 
   /// Loads a full queue (e.g. "all tracks", a playlist, or search results)
-  /// and starts playback at [startIndex]. Each item carries a [MediaItem]
-  /// tag so the OS notification / lock screen shows title, artist and
-  /// cover art with working play/pause/next/prev controls.
-  Future<void> loadQueueAndPlay(List<Track> tracks, {required int startIndex}) async {
-    _queue = tracks;
-    final source = ConcatenatingAudioSource(
-      children: tracks
-          .map(
-            (t) => AudioSource.uri(
-              Uri.parse(t.audioUrl),
-              tag: MediaItem(
-                id: t.id,
-                title: t.title,
-                artist: t.artist,
-                album: t.album,
-                artUri: Uri.tryParse(t.coverUrl),
-                duration: t.duration,
-              ),
-            ),
-          )
-          .toList(),
-    );
-    await player.setAudioSource(source, initialIndex: startIndex);
-    await player.play();
-  }
+  /// and starts playback at [startIndex]. Cover art, title/artist and
+  /// working play/pause/next/prev/repeat all show up in the OS
+  /// notification and lock screen automatically.
+  Future<void> loadQueueAndPlay(List<Track> tracks, {required int startIndex}) =>
+      handler.loadQueue(tracks, startIndex: startIndex);
 
   Future<void> playPause() async {
     if (player.playing) {
-      await player.pause();
+      await handler.pause();
     } else {
-      await player.play();
+      await handler.play();
     }
   }
 
-  Future<void> seek(Duration position) => player.seek(position);
+  Future<void> seek(Duration position) => handler.seek(position);
 
-  Future<void> next() async {
-    if (player.hasNext) await player.seekToNext();
-  }
+  Future<void> next() => handler.skipToNext();
 
-  Future<void> previous() async {
-    // If we're more than 3 seconds into the track, restart it instead of
-    // jumping to the previous track — matches Apple Music behaviour.
-    if (player.position > const Duration(seconds: 3)) {
-      await player.seek(Duration.zero);
-      return;
-    }
-    if (player.hasPrevious) await player.seekToPrevious();
-  }
+  Future<void> previous() => handler.skipToPrevious();
 
-  Future<void> stop() => player.stop();
+  Future<void> stop() => handler.stop();
+
+  Future<void> setLoopMode(LoopMode mode) => player.setLoopMode(mode);
+
+  /// Cycles off -> repeat all -> repeat one -> off. Routed through the
+  /// handler's `customAction`, which is the exact same call the system
+  /// notification's repeat button makes — so tapping it in-app or in the
+  /// notification shade always stays in sync.
+  Future<void> cycleLoopMode() => handler.customAction('repeat');
 
   void dispose() => player.dispose();
 }

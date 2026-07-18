@@ -118,6 +118,17 @@ class NowPlayingScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    iconSize: 22,
+                    icon: Icon(player.isRepeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded),
+                    color: player.isRepeatOn ? accent : Theme.of(context).hintColor,
+                    onPressed: player.toggleRepeat,
+                  ),
+                ],
+              ),
+              Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   IconButton(

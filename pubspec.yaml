@@ -14,10 +14,12 @@ dependencies:
   # State management
   provider: ^6.1.2
 
-  # Audio playback + background/lock-screen controls
+  # Audio playback + background/lock-screen controls, including a custom
+  # notification with a real repeat button (see harmony_audio_handler.dart)
   just_audio: ^0.9.40
-  just_audio_background: ^0.0.1-beta.13
+  audio_service: ^0.18.15
   audio_session: ^0.1.21
+  rxdart: ^0.27.7
 
   # Local storage / cache (recently played, tokens, settings)
   shared_preferences: ^2.2.3
@@ -26,12 +28,30 @@ dependencies:
   http: ^1.2.1
 
   # Picking audio/cover files for the in-app developer uploader
-  file_picker: ^8.1.2
+  file_picker: ^8.0.0+1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon/
+
+# --- App icon generation -----------------------------------------------
+# 1. Put your square photo/logo (at least 1024x1024 px, PNG) here:
+#      assets/icon/icon.png
+# 2. Run:
+#      flutter pub get
+#      flutter pub run flutter_launcher_icons
+#    This regenerates all Android/iOS icon sizes automatically.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  # Optional: adaptive icon for Android 8+ (nicer round/square masking)
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon/icon.png"

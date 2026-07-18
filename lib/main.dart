@@ -1,30 +1,25 @@
 import 'package:flutter/material.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'app.dart';
 import 'services/api_service.dart';
 import 'services/mock_api_service.dart';
-// To use the real backend instead, uncomment:
-// import 'services/remote_api_service.dart';
+import 'services/audio_player_service.dart';
+import 'services/remote_api_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Enables lock-screen / notification-shade playback controls
-  // (play/pause/next/prev + cover art) — requirement #9.
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.harmony.app.audio',
-    androidNotificationChannelName: 'Harmony playback',
-    androidNotificationOngoing: true,
-  );
+  // Initializes background playback + a full custom notification with a
+  // real repeat button (requirement #9). See:
+  //   lib/services/harmony_audio_handler.dart  (the AudioHandler)
+  //   lib/services/audio_player_service.dart   (thin facade used by the UI)
+  await AudioPlayerService.init();
 
-  // --- Backend selection -------------------------------------------------
-  // Today: fully working mock/in-memory backend, zero setup required.
+  // --- Backend selection ---------- ---------------------------------------
   final ApiService api = MockApiService.instance;
-
-  // Later, once the Python backend is deployed, switch to:
-  //   final ApiService api = RemoteApiService(baseUrl: 'https://your-server.com');
-  // Every screen already talks only to the ApiService interface, so this
-  // one-line change is the entire integration.
+  // Для локального теста на эмуляторе Android используйте:
+  //   'http://10.0.2.2:8000'   (алиас localhost хост-машины для эмулятора)
+  // На реальном телефоне в одной Wi-Fi сети с компьютером:
+  //   'http://192.168.X.X:8000' (локальный IP компьютера)
   // -------------------------------------------------------------------
 
   runApp(HarmonyApp(api: api));

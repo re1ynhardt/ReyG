@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart' show LoopMode;
 import '../models/track.dart';
 import '../services/audio_player_service.dart';
 import 'library_provider.dart';
@@ -16,6 +17,7 @@ class PlayerProvider extends ChangeNotifier {
   Duration? duration;
   bool isPlaying = false;
   Track? currentTrack;
+  LoopMode loopMode = LoopMode.off;
 
   late final List<StreamSubscription> _subs;
 
@@ -41,10 +43,16 @@ class PlayerProvider extends ChangeNotifier {
         }
         notifyListeners();
       }),
+      _service.loopModeStream.listen((mode) {
+        loopMode = mode;
+        notifyListeners();
+      }),
     ];
   }
 
   bool get hasTrack => currentTrack != null;
+  bool get isRepeatOn => loopMode != LoopMode.off;
+  bool get isRepeatOne => loopMode == LoopMode.one;
 
   Future<void> playQueue(List<Track> queue, {required int startIndex}) async {
     await _service.loadQueueAndPlay(queue, startIndex: startIndex);
@@ -59,6 +67,9 @@ class PlayerProvider extends ChangeNotifier {
   Future<void> next() => _service.next();
 
   Future<void> previous() => _service.previous();
+
+  /// Cycles repeat: off -> repeat queue -> repeat current track -> off.
+  Future<void> toggleRepeat() => _service.cycleLoopMode();
 
   @override
   void dispose() {

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Этот файл идёт в android/app/src/main/res/raw/keep.xml
+
+  Ресурсы drawable/ic_repeat_off, ic_repeat_all, ic_repeat_one подставляются
+  плагином audio_service во время выполнения по строковому имени
+  ("drawable/ic_repeat_off"), а не через прямую ссылку @drawable/... в коде.
+  Android Gradle Resource Shrinker не видит такие ссылки и может посчитать
+  эти файлы неиспользуемыми и вырезать их из сборки — из-за этого кнопка
+  в уведомлении есть, а иконки физически нет.
+
+  Эта запись явно запрещает шринкеру трогать перечисленные ресурсы.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_repeat_off,@drawable/ic_repeat_all,@drawable/ic_repeat_one" />
