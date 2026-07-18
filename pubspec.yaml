@@ -1,0 +1,37 @@
+name: audio_player_app
+description: "Apple Music–style audio player frontend (Flutter) with mock backend."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # State management
+  provider: ^6.1.2
+
+  # Audio playback + background/lock-screen controls
+  just_audio: ^0.9.40
+  just_audio_background: ^0.0.1-beta.13
+  audio_session: ^0.1.21
+
+  # Local storage / cache (recently played, tokens, settings)
+  shared_preferences: ^2.2.3
+
+  # Networking (used later to talk to the real Python backend)
+  http: ^1.2.1
+
+  # Picking audio/cover files for the in-app developer uploader
+  file_picker: ^8.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

@@ -1,0 +1,165 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../providers/app_state.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/library_provider.dart';
+import '../../providers/player_provider.dart';
+import '../../widgets/track_list_tile.dart';
+import '../admin/upload_screen.dart';
+import 'playlist_detail_screen.dart';
+
+class LibraryScreen extends StatelessWidget {
+  const LibraryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final library = context.watch<LibraryProvider>();
+    final auth = context.watch<AuthProvider>();
+
+    return Scaffold(
+      appBar: AppBar(title: Text(context.tr('library'))),
+      body: ListView(
+        padding: const EdgeInsets.only(bottom: 100),
+        children: [
+          ListTile(
+            leading: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFFFA2D48), Color(0xFF7B2FF7)]),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.favorite, color: Colors.white),
+            ),
+            title: Text(context.tr('liked_songs'), style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text('${library.favoriteTracks.length}'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _SimpleTrackListScreen(
+                title: context.tr('liked_songs'),
+                tracks: library.favoriteTracks,
+                emptyText: context.tr('empty_favorites'),
+              ),
+            )),
+          ),
+          ListTile(
+            leading: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.history),
+            ),
+            title: Text(context.tr('recently_played'), style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text('${library.recentlyPlayedTracks.length}'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _SimpleTrackListScreen(
+                title: context.tr('recently_played'),
+                tracks: library.recentlyPlayedTracks,
+                emptyText: context.tr('empty_recent'),
+              ),
+            )),
+          ),
+          if (auth.isDeveloper)
+            ListTile(
+              leading: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.cloud_upload, color: Colors.white),
+              ),
+              title: Text(context.tr('upload_track'), style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Row(
+                children: [
+                  const Icon(Icons.verified, size: 14),
+                  const SizedBox(width: 4),
+                  Text(context.tr('developer_account'), style: const TextStyle(fontSize: 12)),
+                ],
+              ),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UploadScreen())),
+            ),
+          const Divider(height: 24),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(context.tr('playlists'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: () => _createPlaylist(context),
+                ),
+              ],
+            ),
+          ),
+          ...library.playlists.map(
+            (p) => ListTile(
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: p.coverUrl.isEmpty
+                    ? Container(width: 48, height: 48, color: Theme.of(context).cardColor)
+                    : Image.network(p.coverUrl, width: 48, height: 48, fit: BoxFit.cover),
+              ),
+              title: Text(p.name),
+              subtitle: Text('${p.trackIds.length} tracks'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => PlaylistDetailScreen(playlistId: p.id)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createPlaylist(BuildContext context) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(ctx.tr('new_playlist')),
+        content: TextField(controller: controller, autofocus: true,
+            decoration: InputDecoration(hintText: ctx.tr('playlist_name'))),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(ctx.tr('cancel'))),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: Text(ctx.tr('create'))),
+        ],
+      ),
+    );
+    if (name != null && name.trim().isNotEmpty && context.mounted) {
+      await context.read<LibraryProvider>().createPlaylist(name.trim());
+    }
+  }
+}
+
+class _SimpleTrackListScreen extends StatelessWidget {
+  const _SimpleTrackListScreen({required this.title, required this.tracks, required this.emptyText});
+  final String title;
+  final List tracks;
+  final String emptyText;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = context.watch<PlayerProvider>();
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: tracks.isEmpty
+          ? Center(child: Text(emptyText, style: TextStyle(color: Theme.of(context).hintColor)))
+          : ListView.builder(
+              itemCount: tracks.length,
+              itemBuilder: (context, i) {
+                final track = tracks[i];
+                return TrackListTile(
+                  track: track,
+                  isPlaying: player.currentTrack?.id == track.id,
+                  onTap: () => player.playQueue(List.from(tracks), startIndex: i),
+                );
+              },
+            ),
+    );
+  }
+}
