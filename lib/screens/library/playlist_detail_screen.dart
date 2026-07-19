@@ -5,6 +5,7 @@ import '../../providers/app_state.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/track_list_tile.dart';
+import '../player/mini_player.dart';
 
 class PlaylistDetailScreen extends StatelessWidget {
   const PlaylistDetailScreen({super.key, required this.playlistId});
@@ -34,6 +35,7 @@ class PlaylistDetailScreen extends StatelessWidget {
       body: tracks.isEmpty
           ? Center(child: Text(context.tr('empty_playlist'), style: TextStyle(color: Theme.of(context).hintColor)))
           : ListView.builder(
+              padding: const EdgeInsets.only(bottom: 90),
               itemCount: tracks.length,
               itemBuilder: (context, i) {
                 final track = tracks[i];
@@ -48,6 +50,12 @@ class PlaylistDetailScreen extends StatelessWidget {
                 );
               },
             ),
+      bottomNavigationBar: player.hasTrack
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: const MiniPlayer(),
+            )
+          : null,
     );
   }
 }

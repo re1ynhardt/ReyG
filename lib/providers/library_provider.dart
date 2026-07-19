@@ -11,7 +11,11 @@ class LibraryProvider extends ChangeNotifier {
 
   List<Track> _tracks = [];
   List<Playlist> _playlists = [];
-  Set<String> _favoriteIds = {};
+  // Ordered newest-favorited-first. The backend appends new favorites to
+  // the end of its collection (oldest → newest), so loadAll() reverses
+  // it on the way in; toggleFavorite() then keeps it in sync locally by
+  // inserting new favorites at index 0 instead of appending.
+  List<String> _favoriteIds = [];
   List<String> _recentlyPlayedIds = [];
 
   List<Track> _searchResults = [];
@@ -20,13 +24,15 @@ class LibraryProvider extends ChangeNotifier {
 
   List<Track> get tracks => _tracks;
   List<Playlist> get playlists => _playlists;
-  Set<String> get favoriteIds => _favoriteIds;
+  Set<String> get favoriteIds => _favoriteIds.toSet();
   List<Track> get searchResults => _searchResults;
   bool get searching => _searching;
   bool get loading => _loading;
 
-  List<Track> get favoriteTracks =>
-      _tracks.where((t) => _favoriteIds.contains(t.id)).toList();
+  List<Track> get favoriteTracks {
+    final map = {for (final t in _tracks) t.id: t};
+    return _favoriteIds.map((id) => map[id]).whereType<Track>().toList();
+  }
 
   List<Track> get recentlyPlayedTracks {
     final map = {for (final t in _tracks) t.id: t};
@@ -52,7 +58,7 @@ class LibraryProvider extends ChangeNotifier {
       ]);
       _tracks = results[0] as List<Track>;
       _playlists = results[1] as List<Playlist>;
-      _favoriteIds = (results[2] as List<String>).toSet();
+      _favoriteIds = (results[2] as List<String>).reversed.toList();
       _recentlyPlayedIds = results[3] as List<String>;
     } finally {
       _loading = false;
@@ -88,7 +94,7 @@ class LibraryProvider extends ChangeNotifier {
     if (isFav) {
       _favoriteIds.remove(trackId);
     } else {
-      _favoriteIds.add(trackId);
+      _favoriteIds.insert(0, trackId);
     }
     notifyListeners();
     await _api.setFavorite(trackId: trackId, favorite: !isFav);

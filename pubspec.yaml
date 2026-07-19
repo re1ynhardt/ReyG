@@ -1,7 +1,7 @@
 name: audio_player_app
 description: "flutter audio player with back playback and back on the flut"
 publish_to: 'none'
-version: 1.0.6+1
+version: 1.0.7+1
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

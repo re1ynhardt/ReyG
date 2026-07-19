@@ -6,6 +6,7 @@ import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/track_list_tile.dart';
 import '../admin/upload_screen.dart';
+import '../player/mini_player.dart';
 import 'playlist_detail_screen.dart';
 import 'playlist_picker_sheet.dart';
 
@@ -173,6 +174,7 @@ class _SimpleTrackListScreen extends StatelessWidget {
       body: tracks.isEmpty
           ? Center(child: Text(emptyText, style: TextStyle(color: Theme.of(context).hintColor)))
           : ListView.builder(
+              padding: const EdgeInsets.only(bottom: 90),
               itemCount: tracks.length,
               itemBuilder: (context, i) {
                 final track = tracks[i];
@@ -191,6 +193,12 @@ class _SimpleTrackListScreen extends StatelessWidget {
                 );
               },
             ),
+      bottomNavigationBar: player.hasTrack
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: const MiniPlayer(),
+            )
+          : null,
     );
   }
 }
