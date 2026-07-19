@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/player_provider.dart';
@@ -21,11 +23,44 @@ class MiniPlayer extends StatelessWidget {
       onTap: () => Navigator.of(context).push(
         PageRouteBuilder(
           opaque: false,
-          transitionsBuilder: (_, anim, __, child) => SlideTransition(
-            position: Tween(begin: const Offset(0, 1), end: Offset.zero).animate(anim),
-            child: child,
-          ),
+          barrierColor: Colors.transparent,
+          // Kept short and snappy on purpose — a long, softly-eased
+          // transition reads as "cheap" here. Quick deceleration in,
+          // quick acceleration out.
+          transitionDuration: const Duration(milliseconds: 260),
+          reverseTransitionDuration: const Duration(milliseconds: 220),
           pageBuilder: (_, __, ___) => const NowPlayingScreen(),
+          transitionsBuilder: (_, animation, __, child) {
+            final curved = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutExpo,
+              reverseCurve: Curves.easeInExpo,
+            );
+            final slide = Tween<Offset>(
+              begin: const Offset(0, 1),
+              end: Offset.zero,
+            ).animate(curved);
+            // Blur is strongest at the start/end of the transition and
+            // resolves to 0 once the sheet is fully open — gives the
+            // open/close motion some weight instead of a plain slide.
+            final blurSigma = Tween<double>(begin: 16, end: 0).animate(curved);
+
+            return SlideTransition(
+              position: slide,
+              child: AnimatedBuilder(
+                animation: blurSigma,
+                builder: (context, blurredChild) => ImageFiltered(
+                  imageFilter: ImageFilter.blur(
+                    sigmaX: blurSigma.value,
+                    sigmaY: blurSigma.value,
+                    tileMode: TileMode.decal,
+                  ),
+                  child: blurredChild,
+                ),
+                child: child,
+              ),
+            );
+          },
         ),
       ),
       child: Container(

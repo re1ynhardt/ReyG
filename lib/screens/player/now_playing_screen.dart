@@ -1,16 +1,156 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_state.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
 
-class NowPlayingScreen extends StatelessWidget {
+class NowPlayingScreen extends StatefulWidget {
   const NowPlayingScreen({super.key});
+
+  @override
+  State<NowPlayingScreen> createState() => _NowPlayingScreenState();
+}
+
+class _NowPlayingScreenState extends State<NowPlayingScreen>
+    with SingleTickerProviderStateMixin {
+  // Drag-to-dismiss state. _dragExtent is how far (in px) the sheet has
+  // been pulled down; the snap-back animation reuses the same field so
+  // the gesture and the animation drive the same value.
+  late final AnimationController _snapBackController;
+  double _dragExtent = 0;
+  bool _dismissing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapBackController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+  }
+
+  @override
+  void dispose() {
+    _snapBackController.dispose();
+    super.dispose();
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    if (_dismissing) return;
+    if (_snapBackController.isAnimating) _snapBackController.stop();
+    setState(() {
+      _dragExtent = (_dragExtent + details.primaryDelta!).clamp(0.0, double.infinity);
+    });
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    if (_dismissing) return;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final velocity = details.primaryVelocity ?? 0;
+    final shouldDismiss = _dragExtent > screenHeight * 0.25 || velocity > 800;
+
+    if (shouldDismiss) {
+      setState(() => _dismissing = true);
+      Navigator.of(context).maybePop();
+      return;
+    }
+
+    final snapBack = Tween<double>(begin: _dragExtent, end: 0).animate(
+      CurvedAnimation(parent: _snapBackController, curve: Curves.easeOutCubic),
+    );
+    void listener() => setState(() => _dragExtent = snapBack.value);
+    snapBack.addListener(listener);
+    _snapBackController.forward(from: 0).whenCompleteOrCancel(() {
+      snapBack.removeListener(listener);
+    });
+  }
 
   String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60).toString().padLeft(1, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+
+  /// The cover, plus a second, blurred and enlarged copy of the same
+  /// image sitting behind it so the art bleeds into a soft halo instead
+  /// of ending in a hard rectangle.
+  Widget _buildCoverWithGlow(BuildContext context, String trackId, String coverUrl) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+        final dpr = MediaQuery.of(context).devicePixelRatio;
+        // How far the glow bleeds past the sharp cover, and how much
+        // it's blurred. Kept as their own values because the blur
+        // radius needs to be noticeably smaller than the bleed, or the
+        // glow gets clipped by its own softness before it reaches the
+        // edge of the box below.
+        const bleed = 28.0;
+        const blurSigma = 30.0;
+        return Stack(
+          alignment: Alignment.center,
+          clipBehavior: Clip.none,
+          children: [
+            // Glow layer: a bigger, blurred copy of the same cover
+            // sitting behind it. The blur itself (with TileMode.decal)
+            // is what fades it out — evenly on every side, regardless
+            // of whether the box is square or not — so there's no hard
+            // edge left behind. (A ShaderMask/RadialGradient here looks
+            // tempting but its "radius" is relative to the box's
+            // shortest side, so on a non-square box it fades out
+            // vertically or horizontally before reaching the true edge
+            // and leaves a visible band — avoid it.)
+            Positioned(
+              left: -bleed,
+              right: -bleed,
+              top: -bleed,
+              bottom: -bleed,
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: 0.85,
+                  child: ImageFiltered(
+                    imageFilter: ImageFilter.blur(
+                      sigmaX: blurSigma,
+                      sigmaY: blurSigma,
+                      tileMode: TileMode.decal,
+                    ),
+                    child: Image.network(
+                      coverUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Sharp cover on top.
+            Hero(
+              tag: 'cover_$trackId',
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.network(
+                  coverUrl,
+                  fit: BoxFit.cover,
+                  width: w,
+                  height: h,
+                  // Only one of these is on screen at a time, but
+                  // uploaded covers can be large — cap decoding so a
+                  // 3000x3000 cover doesn't get fully decoded just to
+                  // fill a phone-width box.
+                  cacheWidth: (w * dpr).round(),
+                  errorBuilder: (_, __, ___) => Container(
+                    color: Theme.of(context).cardColor,
+                    child: const Icon(Icons.music_note, size: 80),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -27,8 +167,10 @@ class NowPlayingScreen extends StatelessWidget {
     final duration = player.duration ?? track.duration;
     final position = player.position > duration ? duration : player.position;
     final isFav = library.isFavorite(track.id);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final dragProgress = (_dragExtent / screenHeight).clamp(0.0, 1.0);
 
-    return Scaffold(
+    final content = Scaffold(
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -49,27 +191,7 @@ class NowPlayingScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               Expanded(
-                child: Hero(
-                  tag: 'cover_${track.id}',
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: Image.network(
-                      track.coverUrl,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      // Only one of these is on screen at a time, but
-                      // uploaded covers can be large — cap decoding so a
-                      // 3000x3000 cover doesn't get fully decoded just to
-                      // fill a phone-width box.
-                      cacheWidth: (MediaQuery.of(context).size.width * MediaQuery.of(context).devicePixelRatio)
-                          .round(),
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Theme.of(context).cardColor,
-                        child: const Icon(Icons.music_note, size: 80),
-                      ),
-                    ),
-                  ),
-                ),
+                child: _buildCoverWithGlow(context, track.id, track.coverUrl),
               ),
               const SizedBox(height: 24),
               Row(
@@ -168,6 +290,20 @@ class NowPlayingScreen extends StatelessWidget {
               const SizedBox(height: 32),
             ],
           ),
+        ),
+      ),
+    );
+
+    return GestureDetector(
+      // Only the vertical drag is used for dismissal — horizontal
+      // gestures (e.g. the slider) pass straight through.
+      onVerticalDragUpdate: _onVerticalDragUpdate,
+      onVerticalDragEnd: _onVerticalDragEnd,
+      child: Opacity(
+        opacity: 1 - dragProgress * 0.5,
+        child: Transform.translate(
+          offset: Offset(0, _dragExtent),
+          child: content,
         ),
       ),
     );
