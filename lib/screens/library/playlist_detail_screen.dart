@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -96,7 +97,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   Widget _buildCoverThumb(BuildContext context, String coverUrl) {
     final ImageProvider? image = coverUrl.isEmpty
         ? null
-        : (coverUrl.startsWith('http') ? NetworkImage(coverUrl) : FileImage(File(coverUrl)) as ImageProvider);
+        : (coverUrl.startsWith('http') ? CachedNetworkImageProvider(coverUrl) : FileImage(File(coverUrl)) as ImageProvider);
 
     return SizedBox(
       width: 64,

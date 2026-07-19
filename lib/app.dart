@@ -32,9 +32,7 @@ class HarmonyApp extends StatelessWidget {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
             title: 'ReyMusic',
-            themeMode: appState.themeMode,
-            theme: AppTheme.light,
-            darkTheme: AppTheme.dark,
+            theme: appState.themeOption.themeData,
             home: const SplashGate(),
           );
         },

@@ -50,6 +50,18 @@ abstract class ApiService {
   /// returns the updated [Track] (with `lyricsUrl` populated).
   Future<Track> setLyrics({required String trackId, required String lyrics});
 
+  /// Adds [hashtag] (without the leading '#') to [trackId]'s hashtags and
+  /// returns the updated [Track]. Any signed-in user may call this.
+  /// Implementations enforce [Track.maxHashtags] and
+  /// [Track.maxHashtagLength] server-side too, as a safety net behind
+  /// whatever the UI already checks before calling this.
+  Future<Track> addHashtag({required String trackId, required String hashtag});
+
+  /// Removes [hashtag] from [trackId]'s hashtags and returns the updated
+  /// [Track]. Admin/developer accounts only — implementations reject this
+  /// for regular users.
+  Future<Track> removeHashtag({required String trackId, required String hashtag});
+
   // --- Playlists --------------------------------------------------------
   Future<List<Playlist>> fetchPlaylists();
   Future<Playlist> createPlaylist(String name);
@@ -81,4 +93,17 @@ abstract class ApiService {
   /// [ApiException] thrown by implementations that also enforce it
   /// server-side/storage-side as a safety net.
   Future<AppUser> uploadAvatar(String localImagePath);
+
+  // --- Featured tags (Home screen) ----------------------------------------
+  /// The 4 hashtags currently pinned to the Home screen, in display order.
+  /// Same list for every account — always length 4, with `''` marking an
+  /// unset slot. Implementations should return 4 empty strings before any
+  /// developer has configured them.
+  Future<List<String>> fetchFeaturedTags();
+
+  /// Developer-only: overwrites the 4 featured-tag slots (pass `''` to
+  /// clear a slot) and returns the resulting list. Implementations reject
+  /// this for non-developer accounts and validate each non-empty tag the
+  /// same way [addHashtag] does.
+  Future<List<String>> setFeaturedTags(List<String> tags);
 }

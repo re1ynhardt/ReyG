@@ -1,11 +1,14 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../l10n/app_strings.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
+import '../../theme/app_theme.dart';
+import 'featured_tags_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -65,7 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildAvatar(BuildContext context, String? avatarUrl, String? displayName) {
     final url = (avatarUrl != null && avatarUrl.isNotEmpty) ? avatarUrl : null;
     final ImageProvider? image =
-        url == null ? null : (url.startsWith('http') ? NetworkImage(url) : FileImage(File(url)) as ImageProvider);
+        url == null ? null : (url.startsWith('http') ? CachedNetworkImageProvider(url) : FileImage(File(url)) as ImageProvider);
     return SizedBox(
       width: 48,
       height: 48,
@@ -172,12 +175,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(context.tr('theme'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           ),
-          SwitchListTile(
-            title: Text(appState.isDark ? context.tr('dark') : context.tr('light')),
-            secondary: Icon(appState.isDark ? Icons.dark_mode : Icons.light_mode),
-            value: appState.isDark,
-            onChanged: (v) => appState.toggleTheme(v),
+          ...AppThemeOption.values.map(
+            (option) => RadioListTile<AppThemeOption>(
+              title: Text(context.tr(option.labelKey)),
+              secondary: CircleAvatar(
+                radius: 14,
+                backgroundColor: option.swatch,
+                child: Icon(option.icon, size: 14, color: option.isDark ? Colors.white : Colors.black87),
+              ),
+              value: option,
+              groupValue: appState.themeOption,
+              onChanged: (v) => appState.setTheme(v!),
+            ),
           ),
+          if (auth.isDeveloper) ...[
+            const Divider(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(context.tr('developer_account'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            ),
+            ListTile(
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.tag, color: Colors.white),
+              ),
+              title: Text(context.tr('select_tags'), style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(context.tr('select_tags_subtitle'), style: const TextStyle(fontSize: 12)),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FeaturedTagsScreen())),
+            ),
+          ],
           const Divider(height: 24),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),

@@ -17,6 +17,9 @@ class LibraryProvider extends ChangeNotifier {
   // inserting new favorites at index 0 instead of appending.
   List<String> _favoriteIds = [];
   List<String> _recentlyPlayedIds = [];
+  /// The 4 developer-picked hashtags shown on Home, in slot order — the
+  /// same for every account. `''` marks an unset slot.
+  List<String> _featuredTags = List<String>.filled(4, '');
 
   List<Track> _searchResults = [];
   bool _searching = false;
@@ -30,6 +33,8 @@ class LibraryProvider extends ChangeNotifier {
   bool get searching => _searching;
   bool get loading => _loading;
   List<String> get searchHistory => _searchHistory;
+  /// Always length 4; `''` for any slot the developers haven't set yet.
+  List<String> get featuredTags => _featuredTags;
 
   List<Track> get favoriteTracks {
     final map = {for (final t in _tracks) t.id: t};
@@ -40,6 +45,22 @@ class LibraryProvider extends ChangeNotifier {
     final map = {for (final t in _tracks) t.id: t};
     return _recentlyPlayedIds.map((id) => map[id]).whereType<Track>().toList();
   }
+
+  /// The most recently uploaded track carrying [tag], or null if no track
+  /// has it (or [tag] is empty). [_tracks] is already newest-first (the
+  /// backend returns tracks ordered by upload time, newest first — see
+  /// `list_tracks()` in backend_reference.py), so the first match wins.
+  Track? latestTrackForTag(String tag) {
+    if (tag.isEmpty) return null;
+    for (final t in _tracks) {
+      if (t.hashtags.contains(tag)) return t;
+    }
+    return null;
+  }
+
+  /// Every track carrying [tag], newest-upload-first (same ordering as
+  /// [tracks] and every other track list in the app).
+  List<Track> tracksForTag(String tag) => _tracks.where((t) => t.hashtags.contains(tag)).toList();
 
   Track? trackById(String id) {
     for (final t in _tracks) {
@@ -58,12 +79,14 @@ class LibraryProvider extends ChangeNotifier {
         _api.fetchFavoriteIds(),
         CacheService.instance.getRecentlyPlayed(),
         CacheService.instance.getSearchHistory(),
+        _api.fetchFeaturedTags(),
       ]);
       _tracks = results[0] as List<Track>;
       _playlists = results[1] as List<Playlist>;
       _favoriteIds = (results[2] as List<String>).reversed.toList();
       _recentlyPlayedIds = results[3] as List<String>;
       _searchHistory = results[4] as List<String>;
+      _featuredTags = results[5] as List<String>;
     } finally {
       _loading = false;
       notifyListeners();
@@ -220,6 +243,26 @@ class LibraryProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Any signed-in user can call this. Throws [ApiException] if the
+  /// backend rejects it (over the 4-hashtag cap, over 10 characters, or a
+  /// duplicate) — callers should surface that message to the user.
+  Future<void> addHashtag({required String trackId, required String hashtag}) async {
+    final updated = await _api.addHashtag(trackId: trackId, hashtag: hashtag);
+    _tracks = _tracks.map((t) => t.id == trackId ? updated : t).toList();
+    _searchResults = _searchResults.map((t) => t.id == trackId ? updated : t).toList();
+    notifyListeners();
+  }
+
+  /// Admin/developer accounts only — throws [ApiException] for anyone
+  /// else, which the UI is expected to have already prevented by hiding
+  /// the delete affordance from non-admins in the first place.
+  Future<void> removeHashtag({required String trackId, required String hashtag}) async {
+    final updated = await _api.removeHashtag(trackId: trackId, hashtag: hashtag);
+    _tracks = _tracks.map((t) => t.id == trackId ? updated : t).toList();
+    _searchResults = _searchResults.map((t) => t.id == trackId ? updated : t).toList();
+    notifyListeners();
+  }
+
   /// Developer-only. Removes the track everywhere at once: the main
   /// catalog, every playlist that contained it, and every favorites list
   /// (including the current user's) — all three surfaces the person asked
@@ -234,6 +277,16 @@ class LibraryProvider extends ChangeNotifier {
         .map((p) => p.copyWith(trackIds: p.trackIds.where((id) => id != trackId).toList()))
         .toList();
     _searchResults = _searchResults.where((t) => t.id != trackId).toList();
+    notifyListeners();
+  }
+
+  /// Developer-only. Updates the 4 hashtags featured on every account's
+  /// Home screen. Throws [ApiException] for non-developer accounts — the
+  /// UI is expected to have already hidden this behind an isDeveloper
+  /// check, same as [removeHashtag].
+  Future<void> setFeaturedTags(List<String> tags) async {
+    final updated = await _api.setFeaturedTags(tags);
+    _featuredTags = updated;
     notifyListeners();
   }
 }

@@ -20,6 +20,9 @@ class MockApiService implements ApiService {
   final List<Playlist> _playlists = [];
   final Set<String> _favoriteIds = {};
   final Map<String, String> _lyrics = {};
+  /// The 4 developer-picked tags shown on Home, in slot order. `''` means
+  /// that slot hasn't been set yet.
+  List<String> _featuredTags = List<String>.filled(4, '');
 
   // Very naive fake "users" store, just for the demo.
   final Map<String, String> _accounts = {
@@ -144,14 +147,23 @@ class MockApiService implements ApiService {
   @override
   Future<List<Track>> searchTracks(String query) async {
     await Future.delayed(const Duration(milliseconds: 250));
-    final q = query.trim().toLowerCase();
-    if (q.isEmpty) return [];
-    return _tracks
-        .where((t) =>
-            t.title.toLowerCase().contains(q) ||
-            t.artist.toLowerCase().contains(q) ||
-            t.album.toLowerCase().contains(q))
-        .toList();
+    final raw = query.trim().toLowerCase();
+    if (raw.isEmpty) return [];
+    // A leading '#' (e.g. "#phonk") searches hashtags only. Otherwise
+    // fall back to the regular title/artist/album search — but still
+    // include hashtag matches, so a plain "phonk" also surfaces tracks
+    // tagged #phonk even if the word appears nowhere else on the track.
+    final isHashtagSearch = raw.startsWith('#');
+    final term = isHashtagSearch ? raw.substring(1) : raw;
+    if (term.isEmpty) return [];
+    return _tracks.where((t) {
+      final hashtagMatch = t.hashtags.any((tag) => tag.contains(term));
+      if (isHashtagSearch) return hashtagMatch;
+      return t.title.toLowerCase().contains(term) ||
+          t.artist.toLowerCase().contains(term) ||
+          t.album.toLowerCase().contains(term) ||
+          hashtagMatch;
+    }).toList();
   }
 
   @override
@@ -211,6 +223,44 @@ class MockApiService implements ApiService {
     final idx = _tracks.indexWhere((t) => t.id == trackId);
     if (idx == -1) throw ApiException('Track not found');
     final updated = _tracks[idx].copyWith(lyricsUrl: 'mock://lyrics/$trackId');
+    _tracks[idx] = updated;
+    return updated;
+  }
+
+  @override
+  Future<Track> addHashtag({required String trackId, required String hashtag}) async {
+    await Future.delayed(_networkDelay);
+    final tag = hashtag.trim().toLowerCase();
+    if (tag.isEmpty) throw ApiException('Hashtag cannot be empty');
+    if (tag.length > Track.maxHashtagLength) {
+      throw ApiException('Hashtag must be ${Track.maxHashtagLength} characters or fewer');
+    }
+    if (!Track.isValidHashtag(tag)) {
+      throw ApiException('Hashtags can only contain lowercase English letters and numbers');
+    }
+    final idx = _tracks.indexWhere((t) => t.id == trackId);
+    if (idx == -1) throw ApiException('Track not found');
+    final tags = _tracks[idx].hashtags;
+    if (tags.contains(tag)) throw ApiException('That hashtag is already on this track');
+    if (tags.length >= Track.maxHashtags) {
+      throw ApiException('A track can have at most ${Track.maxHashtags} hashtags');
+    }
+    final updated = _tracks[idx].copyWith(hashtags: [...tags, tag]);
+    _tracks[idx] = updated;
+    return updated;
+  }
+
+  @override
+  Future<Track> removeHashtag({required String trackId, required String hashtag}) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only admin accounts can remove hashtags');
+    }
+    final idx = _tracks.indexWhere((t) => t.id == trackId);
+    if (idx == -1) throw ApiException('Track not found');
+    final tag = hashtag.trim().toLowerCase();
+    final updated = _tracks[idx].copyWith(hashtags: _tracks[idx].hashtags.where((t) => t != tag).toList());
     _tracks[idx] = updated;
     return updated;
   }
@@ -314,6 +364,33 @@ class MockApiService implements ApiService {
     final updated = current.copyWith(avatarUrl: localImagePath);
     _currentMockUser = updated;
     return updated;
+  }
+
+  @override
+  Future<List<String>> fetchFeaturedTags() async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    return List.unmodifiable(_featuredTags);
+  }
+
+  @override
+  Future<List<String>> setFeaturedTags(List<String> tags) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can set featured tags');
+    }
+    final cleaned = List<String>.generate(4, (i) => i < tags.length ? tags[i].trim().toLowerCase() : '');
+    for (final tag in cleaned) {
+      if (tag.isEmpty) continue;
+      if (tag.length > Track.maxHashtagLength) {
+        throw ApiException('Tags must be ${Track.maxHashtagLength} characters or fewer');
+      }
+      if (!Track.isValidHashtag(tag)) {
+        throw ApiException('Tags can only contain lowercase English letters and numbers');
+      }
+    }
+    _featuredTags = cleaned;
+    return List.unmodifiable(_featuredTags);
   }
 }
 

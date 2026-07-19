@@ -78,6 +78,7 @@ class YandexStorageApiService implements ApiService {
   static const _tracksKey = 'db/tracks.json';
   static const _playlistsKey = 'db/playlists.json';
   static const _favoritesKey = 'db/favorites.json';
+  static const _featuredTagsKey = 'db/featured_tags.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
   static const _avatarsPrefix = 'media/avatars/';
@@ -301,14 +302,24 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<List<Track>> searchTracks(String query) async {
     await _currentUserRow();
-    final q = query.trim().toLowerCase();
+    final raw = query.trim().toLowerCase();
+    // A leading '#' (e.g. "#phonk") searches hashtags only. Otherwise
+    // fall back to the regular title/artist/album search — but still
+    // include hashtag matches, so a plain "phonk" also surfaces tracks
+    // tagged #phonk even if the word appears nowhere else on the track.
+    final isHashtagSearch = raw.startsWith('#');
+    final term = isHashtagSearch ? raw.substring(1) : raw;
+    if (isHashtagSearch && term.isEmpty) return [];
     final data = await _readCollection(_tracksKey);
     final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     final filtered = items.where((r) {
+      final hashtags = ((r['hashtags'] as List<dynamic>?) ?? const []).cast<String>();
+      final hashtagMatch = hashtags.any((tag) => tag.toLowerCase().contains(term));
+      if (isHashtagSearch) return hashtagMatch;
       final title = (r['title'] as String).toLowerCase();
       final artist = (r['artist'] as String).toLowerCase();
       final album = (r['album'] as String? ?? '').toLowerCase();
-      return title.contains(q) || artist.contains(q) || album.contains(q);
+      return title.contains(term) || artist.contains(term) || album.contains(term) || hashtagMatch;
     });
     return filtered.map(_trackFromRow).toList();
   }
@@ -391,6 +402,58 @@ class YandexStorageApiService implements ApiService {
       if (idx == -1) throw ApiException('Track not found');
       final row = items[idx] as Map<String, dynamic>;
       row['lyrics_url'] = lyricsUrl;
+      return row;
+    });
+    return _trackFromRow(row);
+  }
+
+  /// Any signed-in user can attach a hashtag to a track. Enforces the
+  /// per-track cap and per-tag length as a safety net — the UI already
+  /// checks both before calling this, but a second backend/app doing raw
+  /// HTTP calls (or a modified client) shouldn't be able to bypass them.
+  @override
+  Future<Track> addHashtag({required String trackId, required String hashtag}) async {
+    final tag = hashtag.trim().toLowerCase();
+    if (tag.isEmpty) throw ApiException('Hashtag cannot be empty');
+    if (tag.length > Track.maxHashtagLength) {
+      throw ApiException('Hashtag must be ${Track.maxHashtagLength} characters or fewer');
+    }
+    if (!Track.isValidHashtag(tag)) {
+      throw ApiException('Hashtags can only contain lowercase English letters and numbers');
+    }
+
+    final row = await _withCollection(_tracksKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final idx = items.indexWhere((r) => (r as Map)['id'] == trackId);
+      if (idx == -1) throw ApiException('Track not found');
+      final row = items[idx] as Map<String, dynamic>;
+      final tags = ((row['hashtags'] as List<dynamic>?) ?? const []).cast<String>();
+      if (tags.contains(tag)) throw ApiException('That hashtag is already on this track');
+      if (tags.length >= Track.maxHashtags) {
+        throw ApiException('A track can have at most ${Track.maxHashtags} hashtags');
+      }
+      row['hashtags'] = [...tags, tag];
+      return row;
+    });
+    return _trackFromRow(row);
+  }
+
+  /// Admin/developer-only. Removes a hashtag from a track.
+  @override
+  Future<Track> removeHashtag({required String trackId, required String hashtag}) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only admin accounts can remove hashtags');
+    }
+    final tag = hashtag.trim().toLowerCase();
+
+    final row = await _withCollection(_tracksKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final idx = items.indexWhere((r) => (r as Map)['id'] == trackId);
+      if (idx == -1) throw ApiException('Track not found');
+      final row = items[idx] as Map<String, dynamic>;
+      final tags = ((row['hashtags'] as List<dynamic>?) ?? const []).cast<String>();
+      row['hashtags'] = tags.where((t) => t != tag).toList();
       return row;
     });
     return _trackFromRow(row);
@@ -730,6 +793,60 @@ class YandexStorageApiService implements ApiService {
       }
       return null;
     });
+  }
+
+  // --- Featured tags (Home screen) ----------------------------------------
+  /// Stored as a single plain JSON array of 4 strings (not the usual
+  /// `{items: [...]}` shape — there's only ever one "row" here) so
+  /// reading it doesn't require decoding a whole collection.
+  @override
+  Future<List<String>> fetchFeaturedTags() async {
+    await _currentUserRow();
+    final obj = await _getObject(_featuredTagsKey);
+    if (obj == null) return List<String>.filled(4, '');
+    final decoded = (jsonDecode(utf8.decode(obj.bytes)) as List<dynamic>).cast<String>();
+    final tags = List<String>.generate(4, (i) => i < decoded.length ? decoded[i] : '');
+    return tags;
+  }
+
+  /// Developer-only. Overwrites the 4 featured-tag slots (`''` clears a
+  /// slot) and returns the resulting list. Uses the same optimistic-
+  /// concurrency retry loop as [_withCollection], just against a plain
+  /// JSON array instead of a `{items: [...]}` collection.
+  @override
+  Future<List<String>> setFeaturedTags(List<String> tags) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only developer accounts can set featured tags');
+    }
+    final cleaned = List<String>.generate(4, (i) => i < tags.length ? tags[i].trim().toLowerCase() : '');
+    for (final tag in cleaned) {
+      if (tag.isEmpty) continue;
+      if (tag.length > Track.maxHashtagLength) {
+        throw ApiException('Tags must be ${Track.maxHashtagLength} characters or fewer');
+      }
+      if (!Track.isValidHashtag(tag)) {
+        throw ApiException('Tags can only contain lowercase English letters and numbers');
+      }
+    }
+
+    for (var attempt = 0; attempt < _maxRetries; attempt++) {
+      final obj = await _getObject(_featuredTagsKey);
+      final body = utf8.encode(jsonEncode(cleaned));
+      try {
+        if (obj == null) {
+          await _putObject(_featuredTagsKey, body, contentType: 'application/json', createOnly: true);
+        } else {
+          await _putObject(_featuredTagsKey, body, contentType: 'application/json', ifMatch: obj.etag);
+        }
+        return cleaned;
+      } on _ConflictException {
+        await Future.delayed(Duration(milliseconds: (50 * (1 << attempt)).clamp(0, 1000)) +
+            Duration(milliseconds: _rng.nextInt(50)));
+        continue;
+      }
+    }
+    throw ApiException('Too many concurrent updates to featured tags, please try again');
   }
 }
 

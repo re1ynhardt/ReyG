@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/track.dart';
@@ -141,7 +142,7 @@ class LibraryScreen extends StatelessWidget {
             final coverImage = displayCover.isEmpty
                 ? null
                 : (displayCover.startsWith('http')
-                    ? NetworkImage(displayCover)
+                    ? CachedNetworkImageProvider(displayCover)
                     : FileImage(File(displayCover)) as ImageProvider);
             return ListTile(
               leading: ClipRRect(

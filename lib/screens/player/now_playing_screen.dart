@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../l10n/app_strings.dart';
 import '../../providers/app_state.dart';
@@ -9,6 +10,7 @@ import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/cached_cover_image.dart';
 import '../../models/track.dart';
+import '../../theme/app_theme.dart';
 import '../library/playlist_picker_sheet.dart';
 import '../library/artist_tracks_screen.dart';
 
@@ -161,6 +163,291 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
     );
   }
 
+  /// Opens a small dialog to add a new hashtag to [track]. Any signed-in
+  /// user can do this. Re-resolves the track's current hashtag count
+  /// from [LibraryProvider] right before showing the dialog (not from
+  /// whatever [track] snapshot the caller has), so a stale reference
+  /// can't let someone sneak past the 4-tag cap.
+  Future<void> _showAddHashtagDialog(BuildContext context, Track track) async {
+    final library = context.read<LibraryProvider>();
+    final locale = context.read<AppState>().locale;
+    final freshTrack = library.trackById(track.id) ?? track;
+    if (freshTrack.hashtags.length >= Track.maxHashtags) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(AppStrings.t(locale, 'hashtag_limit_reached'))));
+      return;
+    }
+
+    final controller = TextEditingController();
+    bool showInvalidHint = false;
+    final submitted = await showGeneralDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: AppStrings.t(locale, 'add_hashtag'),
+      barrierColor: Colors.black.withOpacity(0.5),
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (dialogCtx, anim1, anim2) => _GlassDialog(
+        child: StatefulBuilder(
+          builder: (dialogCtx, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.tag_rounded, color: AppColors.accent, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    AppStrings.t(locale, 'add_hashtag'),
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                maxLength: Track.maxHashtagLength,
+                style: const TextStyle(color: Colors.white),
+                cursorColor: Colors.white,
+                // Hashtags may only contain lowercase English letters/digits.
+                // This formatter lowercases as the person types and strips
+                // anything else (spaces, punctuation, Cyrillic, etc.) instead
+                // of rejecting the whole tag on submit — and flags it via
+                // onValidityChanged so we can surface a live hint below.
+                inputFormatters: [
+                  _HashtagInputFormatter(
+                    onValidityChanged: (hadInvalidChars) {
+                      if (hadInvalidChars != showInvalidHint) {
+                        setDialogState(() => showInvalidHint = hadInvalidChars);
+                      }
+                    },
+                  ),
+                ],
+                decoration: InputDecoration(
+                  prefixText: '#',
+                  prefixStyle: const TextStyle(color: Colors.white70),
+                  hintText: AppStrings.t(locale, 'hashtag_hint'),
+                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
+                  errorText: showInvalidHint ? AppStrings.t(locale, 'hashtag_english_only') : null,
+                  errorStyle: const TextStyle(color: AppColors.accent, fontSize: 12),
+                  counterStyle: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.08),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: Colors.white.withOpacity(0.16)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: Colors.white.withOpacity(0.16)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Colors.white, width: 1.4),
+                  ),
+                  errorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: AppColors.accent, width: 1.2),
+                  ),
+                ),
+                onSubmitted: (value) => Navigator.of(dialogCtx).pop(value),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogCtx).pop(),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                    child: Text(AppStrings.t(locale, 'cancel')),
+                  ),
+                  const SizedBox(width: 4),
+                  FilledButton(
+                    onPressed: () => Navigator.of(dialogCtx).pop(controller.text),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    ),
+                    child: Text(AppStrings.t(locale, 'add')),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      transitionBuilder: (ctx, anim, secondaryAnim, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(scale: Tween<double>(begin: 0.92, end: 1).animate(curved), child: child),
+        );
+      },
+    );
+
+    final tag = submitted?.trim();
+    if (tag == null || tag.isEmpty) return;
+    // Belt-and-suspenders: the input formatter already blocks non-English
+    // characters as the person types, but a paste can still land text the
+    // formatter never got a chance to filter, so re-check the whole tag
+    // here too, before it ever reaches the network/service layer.
+    if (!Track.isValidHashtag(tag)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(AppStrings.t(locale, 'hashtag_english_only'))));
+      }
+      return;
+    }
+    try {
+      await library.addHashtag(trackId: track.id, hashtag: tag);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  /// Admin/developer-only. Tapping an existing hashtag (for an admin)
+  /// shows this confirm-delete dialog instead of the add dialog.
+  Future<void> _showDeleteHashtagDialog(BuildContext context, Track track, String tag) async {
+    final locale = context.read<AppState>().locale;
+    final confirmed = await showGeneralDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '#$tag',
+      barrierColor: Colors.black.withOpacity(0.5),
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (dialogCtx, anim1, anim2) => _GlassDialog(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.delete_outline_rounded, color: AppColors.accent, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '#$tag',
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              AppStrings.t(locale, 'remove_hashtag_confirm'),
+              style: TextStyle(color: Colors.white.withOpacity(0.7), height: 1.4),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(false),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                  child: Text(AppStrings.t(locale, 'cancel')),
+                ),
+                const SizedBox(width: 4),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(true),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.accent,
+                    side: const BorderSide(color: AppColors.accent, width: 1.2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                  child: Text(AppStrings.t(locale, 'delete')),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      transitionBuilder: (ctx, anim, secondaryAnim, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(scale: Tween<double>(begin: 0.92, end: 1).animate(curved), child: child),
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      await context.read<LibraryProvider>().removeHashtag(trackId: track.id, hashtag: tag);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  /// The "highlighted empty field" under the cover art: shows the
+  /// track's hashtags as chips, or a hint inviting the person to add one
+  /// when there are none yet. Every tap target here is its own leaf
+  /// widget (no widget both shows a chip AND wraps the whole row in a
+  /// second tap handler) so taps can't double-fire between an outer and
+  /// an inner GestureDetector.
+  Widget _buildHashtagsField(BuildContext context, Track track, bool isAdmin) {
+    final tags = track.hashtags;
+    final canAddMore = tags.length < Track.maxHashtags;
+
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 40),
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: tags.isEmpty ? 10 : 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white.withOpacity(0.06),
+        border: Border.all(color: Colors.white.withOpacity(0.14)),
+      ),
+      child: tags.isEmpty
+          ? Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _showAddHashtagDialog(context, track),
+                child: Row(
+                  children: [
+                    Icon(Icons.tag, size: 16, color: Colors.white.withOpacity(0.5)),
+                    const SizedBox(width: 6),
+                    Text(
+                      context.tr('add_hashtags_hint'),
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (final tag in tags)
+                  _HashtagChip(
+                    tag: tag,
+                    onTap: () => isAdmin
+                        ? _showDeleteHashtagDialog(context, track, tag)
+                        : _showAddHashtagDialog(context, track),
+                  ),
+                if (canAddMore)
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => _showAddHashtagDialog(context, track),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(Icons.add, size: 16, color: Colors.white.withOpacity(0.6)),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+
   String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60).toString().padLeft(1, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -264,7 +551,13 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
                   Expanded(
                     child: _buildCover(context, track),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 12),
+                  _buildHashtagsField(
+                    context,
+                    library.trackById(track.id) ?? track,
+                    context.watch<AuthProvider>().isDeveloper,
+                  ),
+                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
@@ -404,6 +697,34 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
         child: Transform.translate(
           offset: Offset(0, _dragExtent),
           child: content,
+        ),
+      ),
+    );
+  }
+}
+
+/// A single "#tag" pill in the hashtags field. Its own leaf tap target —
+/// deliberately not nested inside another GestureDetector — so it never
+/// double-fires alongside a container-level tap handler.
+class _HashtagChip extends StatelessWidget {
+  const _HashtagChip({required this.tag, required this.onTap});
+  final String tag;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            color: Colors.white.withOpacity(0.12),
+          ),
+          child: Text('#$tag', style: const TextStyle(color: Colors.white, fontSize: 13)),
         ),
       ),
     );
@@ -672,6 +993,75 @@ class _LyricsPanelState extends State<_LyricsPanel> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Enforces the hashtag character rule (lowercase English letters/digits
+/// only — see [Track.hashtagPattern]) as the person types or pastes:
+/// lowercases the input, strips anything else, and reports via
+/// [onValidityChanged] whether this edit contained a character that had
+/// to be stripped, so the caller can show a live "English letters and
+/// numbers only" hint instead of the character just silently vanishing.
+class _HashtagInputFormatter extends TextInputFormatter {
+  _HashtagInputFormatter({required this.onValidityChanged});
+
+  final ValueChanged<bool> onValidityChanged;
+
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final lowered = newValue.text.toLowerCase();
+    final filtered = lowered.replaceAll(RegExp(r'[^a-z0-9]'), '');
+    onValidityChanged(filtered.length < newValue.text.length);
+    if (filtered == newValue.text) return newValue;
+    return TextEditingValue(text: filtered, selection: TextSelection.collapsed(offset: filtered.length));
+  }
+}
+
+/// Shared "premium" presentation for the small hashtag dialogs
+/// (add/remove): a translucent black card with a soft white border over
+/// a blurred backdrop, centered on screen. Reuses the same frosted-glass
+/// technique as [_LyricsPanel] elsewhere on this screen — blur only the
+/// area behind the card, then a mostly-transparent fill + hairline
+/// border on top — instead of the opaque default Material dialog.
+class _GlassDialog extends StatelessWidget {
+  const _GlassDialog({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = (MediaQuery.of(context).size.width - 64).clamp(0.0, 340.0);
+    return Center(
+      child: GestureDetector(
+        // Swallow taps inside the card so they don't fall through to
+        // the barrier and dismiss the dialog.
+        onTap: () {},
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+            child: Container(
+              width: width,
+              padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.55),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.white.withOpacity(0.18)),
+              ),
+              // showGeneralDialog does NOT wrap pageBuilder content in a
+              // Material widget, so anything here that needs one
+              // (TextField, InkWell-based buttons, etc.) needs its own.
+              // MaterialType.transparency keeps it invisible so it
+              // doesn't paint over our frosted-glass background above.
+              child: Material(
+                type: MaterialType.transparency,
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -34,6 +34,10 @@ import 'api_service.dart';
 ///   POST   /account/avatar      multipart(avatar)      -> user json (max 5 MB, enforce server-side too)
 ///   GET    /tracks/{id}/lyrics                          -> {lyrics: string} or 404 if none
 ///   PUT    /tracks/{id}/lyrics  {lyrics: string}        -> track json (developer-only)
+///   POST   /tracks/{id}/hashtags {hashtag: string}      -> track json
+///   DELETE /tracks/{id}/hashtags/{hashtag}              -> track json (admin-only)
+///   GET    /featured_tags                               -> ["tag1","tag2","tag3","tag4"]
+///   PUT    /featured_tags       {tags: [t1,t2,t3,t4]}    -> ["tag1","tag2","tag3","tag4"] (developer-only)
 class RemoteApiService implements ApiService {
   RemoteApiService({required this.baseUrl, this.authToken});
 
@@ -137,6 +141,25 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<Track> addHashtag({required String trackId, required String hashtag}) async {
+    final tag = hashtag.trim().toLowerCase();
+    if (!Track.isValidHashtag(tag)) {
+      throw ApiException('Hashtags can only contain lowercase English letters and numbers');
+    }
+    final res = await http.post(_u('/tracks/$trackId/hashtags'),
+        headers: _headers, body: jsonEncode({'hashtag': tag}));
+    _throwIfError(res);
+    return Track.fromJson(jsonDecode(res.body));
+  }
+
+  @override
+  Future<Track> removeHashtag({required String trackId, required String hashtag}) async {
+    final res = await http.delete(_u('/tracks/$trackId/hashtags/${Uri.encodeComponent(hashtag)}'), headers: _headers);
+    _throwIfError(res);
+    return Track.fromJson(jsonDecode(res.body));
+  }
+
+  @override
   Future<List<Playlist>> fetchPlaylists() async {
     final res = await http.get(_u('/playlists'), headers: _headers);
     _throwIfError(res);
@@ -210,6 +233,21 @@ class RemoteApiService implements ApiService {
     final res = await http.Response.fromStream(streamed);
     _throwIfError(res);
     return AppUser.fromJson(jsonDecode(res.body));
+  }
+
+  @override
+  Future<List<String>> fetchFeaturedTags() async {
+    final res = await http.get(_u('/featured_tags'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as List).map((e) => e as String).toList();
+  }
+
+  @override
+  Future<List<String>> setFeaturedTags(List<String> tags) async {
+    final res = await http.put(_u('/featured_tags'),
+        headers: _headers, body: jsonEncode({'tags': tags}));
+    _throwIfError(res);
+    return (jsonDecode(res.body) as List).map((e) => e as String).toList();
   }
 
   void _throwIfError(http.Response res) {

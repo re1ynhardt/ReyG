@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/track.dart';
+import '../utils/duration_format.dart';
 import 'cached_cover_image.dart';
 
 class TrackListTile extends StatelessWidget {
@@ -48,7 +49,21 @@ class TrackListTile extends StatelessWidget {
         ),
       ),
       subtitle: Text(track.artist, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: trailing,
+      trailing: trailing == null
+          ? Text(
+              formatDuration(track.duration),
+              style: TextStyle(color: Theme.of(context).hintColor, fontSize: 15),
+            )
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  formatDuration(track.duration),
+                  style: TextStyle(color: Theme.of(context).hintColor, fontSize: 15),
+                ),
+                trailing!,
+              ],
+            ),
     );
   }
 }
