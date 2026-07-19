@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/track.dart';
+import 'cached_cover_image.dart';
 
 class TrackListTile extends StatelessWidget {
   const TrackListTile({
@@ -25,18 +26,11 @@ class TrackListTile extends StatelessWidget {
       contentPadding: EdgeInsets.symmetric(horizontal: dense ? 8 : 16, vertical: 0),
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        child: Image.network(
-          track.coverUrl,
+        child: CachedCoverImage(
+          track: track,
           width: dense ? 44 : 52,
           height: dense ? 44 : 52,
-          fit: BoxFit.cover,
-          // Without this, Flutter decodes the FULL original image into
-          // memory (e.g. a 2000x2000 cover) just to show a 50px thumbnail.
-          // Scrolling through hundreds/thousands of tracks like that is
-          // exactly what eats RAM and can crash the app. Capping the
-          // decode size to roughly what's actually on screen fixes it.
-          cacheWidth: ((dense ? 44 : 52) * MediaQuery.of(context).devicePixelRatio).round(),
-          errorBuilder: (_, __, ___) => Container(
+          errorBuilder: (context) => Container(
             width: dense ? 44 : 52,
             height: dense ? 44 : 52,
             color: Theme.of(context).cardColor,

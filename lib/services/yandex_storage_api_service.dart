@@ -80,7 +80,14 @@ class YandexStorageApiService implements ApiService {
   static const _favoritesKey = 'db/favorites.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
+  static const _avatarsPrefix = 'media/avatars/';
+  static const _lyricsPrefix = 'media/lyrics/';
   static const _maxRetries = 8;
+  static const _maxAvatarBytes = 5 * 1024 * 1024;
+  static const _maxCoverBytes = 5 * 1024 * 1024;
+  // Any image format is accepted for playlist covers except GIF (avoids
+  // animated covers rendering oddly in fixed-size artwork slots).
+  static const _rejectedCoverExtensions = {'.gif'};
 
   String? _sessionToken;
 
@@ -217,6 +224,7 @@ class YandexStorageApiService implements ApiService {
         'display_name': displayName.trim().isEmpty ? normalizedEmail.split('@').first : displayName.trim(),
         'is_developer': config.developerEmails.contains(normalizedEmail),
         'token': _randomId(),
+        'avatar_url': '',
       };
       items.add(row);
       return row;
@@ -251,6 +259,7 @@ class YandexStorageApiService implements ApiService {
         displayName: row['display_name'] as String,
         isDeveloper: row['is_developer'] as bool? ?? false,
         token: row['token'] as String,
+        avatarUrl: row['avatar_url'] as String? ?? '',
       );
 
   /// Every call below re-checks that our token still belongs to an account
@@ -338,6 +347,97 @@ class YandexStorageApiService implements ApiService {
       return row;
     });
     return _trackFromRow(row);
+  }
+
+  /// Lyrics are stored as their own public-read text object (mirroring how
+  /// audio/cover files are handled) rather than inline in the tracks JSON,
+  /// so we don't have to pull every track's lyrics down just to show the
+  /// catalog or search results — they're only fetched when the lyrics
+  /// panel is actually opened.
+  @override
+  Future<String?> fetchLyrics(Track track) async {
+    if (!track.hasLyrics) return null;
+    final res = await http.get(Uri.parse(track.lyricsUrl));
+    if (res.statusCode == 404) return null;
+    if (res.statusCode >= 400) {
+      throw ApiException('Failed to load lyrics (${res.statusCode})');
+    }
+    return utf8.decode(res.bodyBytes);
+  }
+
+  /// Developer-only. Uploads the lyrics text to a deterministic
+  /// per-track key (so editing existing lyrics overwrites the same
+  /// object instead of leaving old copies behind) and records the
+  /// resulting URL on the track's row.
+  @override
+  Future<Track> setLyrics({required String trackId, required String lyrics}) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only developer accounts can add lyrics');
+    }
+
+    final key = '$_lyricsPrefix$trackId.txt';
+    await _putObject(
+      key,
+      utf8.encode(lyrics),
+      contentType: 'text/plain; charset=utf-8',
+      publicRead: true,
+    );
+    final lyricsUrl = 'https://${config.endpointHost}/${config.bucket}/$key';
+
+    final row = await _withCollection(_tracksKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final idx = items.indexWhere((r) => (r as Map)['id'] == trackId);
+      if (idx == -1) throw ApiException('Track not found');
+      final row = items[idx] as Map<String, dynamic>;
+      row['lyrics_url'] = lyricsUrl;
+      return row;
+    });
+    return _trackFromRow(row);
+  }
+
+  /// Uploads a custom avatar for the currently logged-in user. Rejects
+  /// anything over 5 MB before touching the network, uploads the image to
+  /// `media/avatars/` (public-read, so it can be shown without signing
+  /// every request), then updates the user's row so the new avatar sticks
+  /// across sessions/devices.
+  @override
+  Future<AppUser> uploadAvatar(String localImagePath) async {
+    final user = await _currentUserRow();
+
+    final file = File(localImagePath);
+    final sizeBytes = await file.length();
+    if (sizeBytes > _maxAvatarBytes) {
+      throw ApiException('Image is too large — max 5 MB');
+    }
+
+    final oldAvatarUrl = user['avatar_url'] as String?;
+    final avatarUrl = await _uploadMediaFile(localImagePath, _avatarsPrefix);
+
+    final row = await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == user['id'],
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Unauthorized — no account matches this session');
+      match['avatar_url'] = avatarUrl;
+      return match;
+    });
+
+    // Best-effort cleanup of the previous avatar so old images don't pile
+    // up in the bucket forever. Non-fatal: the new avatar is already saved
+    // either way.
+    final oldKey = _keyFromPublicUrl(oldAvatarUrl);
+    if (oldKey != null) {
+      try {
+        await _deleteObject(oldKey);
+      } catch (_) {
+        // Non-fatal.
+      }
+    }
+
+    return _userFromRow(row);
   }
 
   Future<String> _uploadMediaFile(String localPath, String prefix) async {
@@ -525,6 +625,85 @@ class YandexStorageApiService implements ApiService {
       items.removeWhere((r) => r['id'] == playlistId);
       return null;
     });
+  }
+
+  /// Uploads a custom cover for a playlist owned by the current user.
+  /// Rejects anything over 5 MB or a GIF before touching the network,
+  /// uploads the image to `media/covers/` (public-read, same prefix
+  /// track covers use), then updates the playlist's row so the new
+  /// cover sticks across sessions/devices.
+  @override
+  Future<Playlist> uploadPlaylistCover({required String playlistId, required String localImagePath}) async {
+    final user = await _currentUserRow();
+
+    final file = File(localImagePath);
+    final sizeBytes = await file.length();
+    if (sizeBytes > _maxCoverBytes) {
+      throw ApiException('Image is too large — max 5 MB');
+    }
+    final dotIndex = localImagePath.lastIndexOf('.');
+    final ext = dotIndex == -1 ? '' : localImagePath.substring(dotIndex).toLowerCase();
+    if (_rejectedCoverExtensions.contains(ext)) {
+      throw ApiException('GIFs are not supported for playlist covers');
+    }
+
+    // Ownership check happens up front so we don't upload a file to
+    // storage only to find out the playlist isn't the caller's.
+    final data = await _readCollection(_playlistsKey);
+    final oldRow = _findOwnedPlaylist(data, playlistId, user['id'] as String);
+    final oldCoverUrl = oldRow['cover_url'] as String?;
+
+    final coverUrl = await _uploadMediaFile(localImagePath, _coversPrefix);
+
+    final row = await _withCollection(_playlistsKey, (data) {
+      final row = _findOwnedPlaylist(data, playlistId, user['id'] as String);
+      row['cover_url'] = coverUrl;
+      return row;
+    });
+
+    // Best-effort cleanup of the previous cover so old images don't pile
+    // up in the bucket forever. Non-fatal: the new cover is already
+    // saved either way.
+    final oldKey = _keyFromPublicUrl(oldCoverUrl);
+    if (oldKey != null) {
+      try {
+        await _deleteObject(oldKey);
+      } catch (_) {
+        // Non-fatal.
+      }
+    }
+
+    return _playlistFromRow(row);
+  }
+
+  /// Clears a playlist's custom cover and best-effort deletes the
+  /// underlying object from storage, so the UI falls back to the most
+  /// recently added track's cover (handled client-side — see
+  /// library_screen.dart) instead of a broken/blank image.
+  @override
+  Future<Playlist> removePlaylistCover({required String playlistId}) async {
+    final user = await _currentUserRow();
+
+    final data = await _readCollection(_playlistsKey);
+    final oldRow = _findOwnedPlaylist(data, playlistId, user['id'] as String);
+    final oldCoverUrl = oldRow['cover_url'] as String?;
+
+    final row = await _withCollection(_playlistsKey, (data) {
+      final row = _findOwnedPlaylist(data, playlistId, user['id'] as String);
+      row['cover_url'] = '';
+      return row;
+    });
+
+    final oldKey = _keyFromPublicUrl(oldCoverUrl);
+    if (oldKey != null) {
+      try {
+        await _deleteObject(oldKey);
+      } catch (_) {
+        // Non-fatal.
+      }
+    }
+
+    return _playlistFromRow(row);
   }
 
   Playlist _playlistFromRow(Map<String, dynamic> row) => Playlist.fromJson(row);

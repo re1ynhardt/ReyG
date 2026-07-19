@@ -40,6 +40,16 @@ abstract class ApiService {
   /// reference to it in playlists and favorites, everywhere in the app.
   Future<void> deleteTrack(String trackId);
 
+  /// Fetches the lyrics text for [track], or returns null if none has
+  /// been added yet. Lyrics are stored as a text object in Yandex
+  /// Storage — this reads that object (lazily, only when the lyrics
+  /// panel is opened), not a database.
+  Future<String?> fetchLyrics(Track track);
+
+  /// Developer-only: uploads/overwrites the lyrics text for a track and
+  /// returns the updated [Track] (with `lyricsUrl` populated).
+  Future<Track> setLyrics({required String trackId, required String lyrics});
+
   // --- Playlists --------------------------------------------------------
   Future<List<Playlist>> fetchPlaylists();
   Future<Playlist> createPlaylist(String name);
@@ -47,7 +57,28 @@ abstract class ApiService {
   Future<void> removeTrackFromPlaylist({required String playlistId, required String trackId});
   Future<void> deletePlaylist(String playlistId);
 
+  /// Uploads a custom cover image for a playlist owned by the current
+  /// user and returns the updated [Playlist] (with the new `coverUrl`
+  /// populated). Callers are expected to enforce the 5 MB size limit and
+  /// reject GIFs before calling this — see [ApiException] thrown by
+  /// implementations that also enforce these rules server-side/storage-side
+  /// as a safety net.
+  Future<Playlist> uploadPlaylistCover({required String playlistId, required String localImagePath});
+
+  /// Clears a playlist's custom cover (`coverUrl` goes back to `''`), so
+  /// the UI falls back to showing the most recently added track's cover
+  /// instead. Returns the updated [Playlist].
+  Future<Playlist> removePlaylistCover({required String playlistId});
+
   // --- Favorites ----------------------------------------------------------
   Future<List<String>> fetchFavoriteIds();
   Future<void> setFavorite({required String trackId, required bool favorite});
+
+  // --- Account ------------------------------------------------------------
+  /// Uploads a custom avatar image for the current user and returns the
+  /// updated [AppUser] (with the new `avatarUrl` populated). Callers are
+  /// expected to enforce the 5 MB size limit before calling this — see
+  /// [ApiException] thrown by implementations that also enforce it
+  /// server-side/storage-side as a safety net.
+  Future<AppUser> uploadAvatar(String localImagePath);
 }

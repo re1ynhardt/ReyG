@@ -2,6 +2,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:rxdart/rxdart.dart';
 import '../models/track.dart';
+import 'download_service.dart';
 
 /// Custom [BaseAudioHandler] wrapping just_audio's [AudioPlayer].
 ///
@@ -115,11 +116,20 @@ class HarmonyAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> loadQueue(List<Track> tracks, {required int startIndex}) async {
     _tracks = tracks;
     queue.add(tracks.map(_toMediaItem).toList());
-    final source = ConcatenatingAudioSource(
-      children: tracks.map((t) => AudioSource.uri(Uri.parse(t.audioUrl))).toList(),
-    );
+    final children = await Future.wait(tracks.map(_audioSourceFor));
+    final source = ConcatenatingAudioSource(children: children);
     await player.setAudioSource(source, initialIndex: startIndex);
     await play();
+  }
+
+  /// Prefers a cached on-device copy of [t] (offline playback) over
+  /// streaming it, falling back to the network URL when it isn't cached.
+  Future<AudioSource> _audioSourceFor(Track t) async {
+    final localPath = await DownloadService.instance.cachedFilePath(t.id);
+    if (localPath != null) {
+      return AudioSource.uri(Uri.file(localPath), tag: t.id);
+    }
+    return AudioSource.uri(Uri.parse(t.audioUrl), tag: t.id);
   }
 
   @override

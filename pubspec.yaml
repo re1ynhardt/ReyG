@@ -1,7 +1,7 @@
 name: audio_player_app
 description: "flutter audio player with back playback and back on the flut"
 publish_to: 'none'
-version: 1.0.8+1
+version: 1.1.0+1
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -23,6 +23,9 @@ dependencies:
 
   # Local storage / cache (recently played, tokens, settings)
   shared_preferences: ^2.2.3
+
+  # Filesystem paths for on-device track caching (offline playback)
+  path_provider: ^2.1.4
 
   # Networking — used to talk directly to Yandex Object Storage's
   # S3-compatible API (see lib/services/yandex_storage_api_service.dart).

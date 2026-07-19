@@ -6,6 +6,7 @@ import 'providers/library_provider.dart';
 import 'providers/player_provider.dart';
 import 'screens/splash_gate.dart';
 import 'services/api_service.dart';
+import 'services/download_service.dart';
 import 'theme/app_theme.dart';
 
 class HarmonyApp extends StatelessWidget {
@@ -20,6 +21,7 @@ class HarmonyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AppState()),
         ChangeNotifierProvider(create: (_) => AuthProvider(api)),
         ChangeNotifierProvider(create: (_) => LibraryProvider(api)),
+        ChangeNotifierProvider.value(value: DownloadService.instance),
         ChangeNotifierProxyProvider<LibraryProvider, PlayerProvider>(
           create: (ctx) => PlayerProvider(ctx.read<LibraryProvider>()),
           update: (ctx, library, previous) => previous ?? PlayerProvider(library),

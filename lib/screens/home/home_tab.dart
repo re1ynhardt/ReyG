@@ -5,6 +5,7 @@ import '../../providers/app_state.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/section_header.dart';
+import '../../widgets/cached_cover_image.dart';
 import '../../widgets/track_list_tile.dart';
 import '../library/playlist_picker_sheet.dart';
 
@@ -101,13 +102,11 @@ class _CoverCard extends StatelessWidget {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: Image.network(
-                track.coverUrl,
+              child: CachedCoverImage(
+                track: track,
                 width: 140,
                 height: 140,
-                fit: BoxFit.cover,
-                cacheWidth: (140 * MediaQuery.of(context).devicePixelRatio).round(),
-                errorBuilder: (_, __, ___) => Container(
+                errorBuilder: (context) => Container(
                   width: 140,
                   height: 140,
                   color: Theme.of(context).cardColor,

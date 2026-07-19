@@ -27,8 +27,13 @@ import 'api_service.dart';
 ///   POST   /playlists/{id}/tracks       {track_id}    -> 204
 ///   DELETE /playlists/{id}/tracks/{trackId}           -> 204
 ///   DELETE /playlists/{id}                            -> 204
+///   POST   /playlists/{id}/cover multipart(cover)      -> playlist json (max 5 MB, no GIFs, enforce server-side too)
+///   DELETE /playlists/{id}/cover                        -> playlist json
 ///   GET    /favorites                                 -> [track_id]
 ///   PUT    /favorites/{trackId}  {favorite: bool}      -> 204
+///   POST   /account/avatar      multipart(avatar)      -> user json (max 5 MB, enforce server-side too)
+///   GET    /tracks/{id}/lyrics                          -> {lyrics: string} or 404 if none
+///   PUT    /tracks/{id}/lyrics  {lyrics: string}        -> track json (developer-only)
 class RemoteApiService implements ApiService {
   RemoteApiService({required this.baseUrl, this.authToken});
 
@@ -116,6 +121,22 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<String?> fetchLyrics(Track track) async {
+    final res = await http.get(_u('/tracks/${track.id}/lyrics'), headers: _headers);
+    if (res.statusCode == 404) return null;
+    _throwIfError(res);
+    return (jsonDecode(res.body) as Map<String, dynamic>)['lyrics'] as String?;
+  }
+
+  @override
+  Future<Track> setLyrics({required String trackId, required String lyrics}) async {
+    final res = await http.put(_u('/tracks/$trackId/lyrics'),
+        headers: _headers, body: jsonEncode({'lyrics': lyrics}));
+    _throwIfError(res);
+    return Track.fromJson(jsonDecode(res.body));
+  }
+
+  @override
   Future<List<Playlist>> fetchPlaylists() async {
     final res = await http.get(_u('/playlists'), headers: _headers);
     _throwIfError(res);
@@ -149,6 +170,24 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<Playlist> uploadPlaylistCover({required String playlistId, required String localImagePath}) async {
+    final request = http.MultipartRequest('POST', _u('/playlists/$playlistId/cover'));
+    if (authToken != null) request.headers['Authorization'] = 'Bearer $authToken';
+    request.files.add(await http.MultipartFile.fromPath('cover', localImagePath));
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    _throwIfError(res);
+    return Playlist.fromJson(jsonDecode(res.body));
+  }
+
+  @override
+  Future<Playlist> removePlaylistCover({required String playlistId}) async {
+    final res = await http.delete(_u('/playlists/$playlistId/cover'), headers: _headers);
+    _throwIfError(res);
+    return Playlist.fromJson(jsonDecode(res.body));
+  }
+
+  @override
   Future<List<String>> fetchFavoriteIds() async {
     final res = await http.get(_u('/favorites'), headers: _headers);
     _throwIfError(res);
@@ -160,6 +199,17 @@ class RemoteApiService implements ApiService {
     final res = await http.put(_u('/favorites/$trackId'),
         headers: _headers, body: jsonEncode({'favorite': favorite}));
     _throwIfError(res);
+  }
+
+  @override
+  Future<AppUser> uploadAvatar(String localImagePath) async {
+    final request = http.MultipartRequest('POST', _u('/account/avatar'));
+    if (authToken != null) request.headers['Authorization'] = 'Bearer $authToken';
+    request.files.add(await http.MultipartFile.fromPath('avatar', localImagePath));
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    _throwIfError(res);
+    return AppUser.fromJson(jsonDecode(res.body));
   }
 
   void _throwIfError(http.Response res) {

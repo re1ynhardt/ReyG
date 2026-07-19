@@ -81,6 +81,22 @@ class AuthProvider extends ChangeNotifier {
     await prefs.setString(_kUserKey, jsonEncode(user.toJson()));
   }
 
+  /// Uploads a new avatar for the current user and persists the updated
+  /// profile locally so it survives app restarts. Throws [ApiException] if
+  /// the backend rejects the file (e.g. over the 5 MB limit) — callers
+  /// should surface that message to the user.
+  Future<void> uploadAvatar(String localImagePath) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      final updated = await _api.uploadAvatar(localImagePath);
+      await _persist(updated);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> logout() async {
     _user = null;
     _status = AuthStatus.unauthenticated;

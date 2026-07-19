@@ -21,6 +21,7 @@ class LibraryProvider extends ChangeNotifier {
   List<Track> _searchResults = [];
   bool _searching = false;
   bool _loading = false;
+  List<String> _searchHistory = [];
 
   List<Track> get tracks => _tracks;
   List<Playlist> get playlists => _playlists;
@@ -28,6 +29,7 @@ class LibraryProvider extends ChangeNotifier {
   List<Track> get searchResults => _searchResults;
   bool get searching => _searching;
   bool get loading => _loading;
+  List<String> get searchHistory => _searchHistory;
 
   List<Track> get favoriteTracks {
     final map = {for (final t in _tracks) t.id: t};
@@ -55,11 +57,13 @@ class LibraryProvider extends ChangeNotifier {
         _api.fetchPlaylists(),
         _api.fetchFavoriteIds(),
         CacheService.instance.getRecentlyPlayed(),
+        CacheService.instance.getSearchHistory(),
       ]);
       _tracks = results[0] as List<Track>;
       _playlists = results[1] as List<Playlist>;
       _favoriteIds = (results[2] as List<String>).reversed.toList();
       _recentlyPlayedIds = results[3] as List<String>;
+      _searchHistory = results[4] as List<String>;
     } finally {
       _loading = false;
       notifyListeners();
@@ -80,6 +84,29 @@ class LibraryProvider extends ChangeNotifier {
       _searching = false;
       notifyListeners();
     }
+  }
+
+  /// Saves [query] into the on-device search history cache (not the
+  /// backend/database) and moves it to the front if it already exists.
+  Future<void> commitSearchHistory(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+    await CacheService.instance.addSearchHistory(trimmed);
+    _searchHistory.removeWhere((q) => q.toLowerCase() == trimmed.toLowerCase());
+    _searchHistory.insert(0, trimmed);
+    notifyListeners();
+  }
+
+  Future<void> removeSearchHistoryItem(String query) async {
+    await CacheService.instance.removeSearchHistoryItem(query);
+    _searchHistory.remove(query);
+    notifyListeners();
+  }
+
+  Future<void> clearSearchHistory() async {
+    await CacheService.instance.clearSearchHistory();
+    _searchHistory = [];
+    notifyListeners();
   }
 
   Future<void> markPlayed(String trackId) async {
@@ -137,6 +164,31 @@ class LibraryProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Uploads a new cover image for [playlistId] and updates local state
+  /// so it's reflected immediately everywhere the playlist is shown.
+  /// Throws [ApiException] if the backend rejects the file (e.g. over
+  /// the 5 MB limit, or a GIF) — callers should surface that message to
+  /// the user.
+  Future<void> uploadPlaylistCover({required String playlistId, required String localImagePath}) async {
+    final updated = await _api.uploadPlaylistCover(playlistId: playlistId, localImagePath: localImagePath);
+    final idx = _playlists.indexWhere((p) => p.id == playlistId);
+    if (idx != -1) {
+      _playlists[idx] = updated;
+      notifyListeners();
+    }
+  }
+
+  /// Clears [playlistId]'s custom cover, reverting the UI to showing the
+  /// most recently added track's cover instead (see library_screen.dart).
+  Future<void> removePlaylistCover(String playlistId) async {
+    final updated = await _api.removePlaylistCover(playlistId: playlistId);
+    final idx = _playlists.indexWhere((p) => p.id == playlistId);
+    if (idx != -1) {
+      _playlists[idx] = updated;
+      notifyListeners();
+    }
+  }
+
   Future<Track> uploadTrack({
     required String title,
     required String artist,
@@ -154,6 +206,18 @@ class LibraryProvider extends ChangeNotifier {
     _tracks = [track, ..._tracks];
     notifyListeners();
     return track;
+  }
+
+  Future<String?> fetchLyrics(Track track) => _api.fetchLyrics(track);
+
+  /// Developer-only. Uploads the lyrics text and updates the track
+  /// everywhere it's currently held in memory (catalog, search results)
+  /// so the lyrics panel reflects it immediately without a full reload.
+  Future<void> setLyrics({required String trackId, required String lyrics}) async {
+    final updated = await _api.setLyrics(trackId: trackId, lyrics: lyrics);
+    _tracks = _tracks.map((t) => t.id == trackId ? updated : t).toList();
+    _searchResults = _searchResults.map((t) => t.id == trackId ? updated : t).toList();
+    notifyListeners();
   }
 
   /// Developer-only. Removes the track everywhere at once: the main

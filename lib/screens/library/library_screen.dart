@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../models/track.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
+import '../../services/download_service.dart';
 import '../../widgets/track_list_tile.dart';
 import '../admin/upload_screen.dart';
 import '../player/mini_player.dart';
@@ -17,6 +21,11 @@ class LibraryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
     final auth = context.watch<AuthProvider>();
+    final downloads = context.watch<DownloadService>();
+    // Newest-cached-first, same ordering DownloadService persists them in.
+    final trackMap = {for (final t in library.tracks) t.id: t};
+    final cachedTracks =
+        downloads.cachedTrackIds.map((id) => trackMap[id]).whereType<Track>().toList();
 
     return Scaffold(
       appBar: AppBar(title: Text(context.tr('library'))),
@@ -60,6 +69,26 @@ class LibraryScreen extends StatelessWidget {
                 title: context.tr('recently_played'),
                 tracks: library.recentlyPlayedTracks,
                 emptyText: context.tr('empty_recent'),
+              ),
+            )),
+          ),
+          ListTile(
+            leading: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.download_done),
+            ),
+            title: Text(context.tr('cached_tracks'), style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text('${cachedTracks.length}'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _SimpleTrackListScreen(
+                title: context.tr('cached_tracks'),
+                tracks: cachedTracks,
+                emptyText: context.tr('empty_cached'),
               ),
             )),
           ),
@@ -109,10 +138,15 @@ class LibraryScreen extends StatelessWidget {
               final match = library.tracks.where((t) => t.id == lastTrackId);
               if (match.isNotEmpty) displayCover = match.first.coverUrl;
             }
+            final coverImage = displayCover.isEmpty
+                ? null
+                : (displayCover.startsWith('http')
+                    ? NetworkImage(displayCover)
+                    : FileImage(File(displayCover)) as ImageProvider);
             return ListTile(
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: displayCover.isEmpty
+                child: coverImage == null
                     ? Container(
                         width: 48,
                         height: 48,
@@ -120,12 +154,12 @@ class LibraryScreen extends StatelessWidget {
                         alignment: Alignment.center,
                         child: Icon(Icons.music_note, size: 20, color: Theme.of(context).hintColor),
                       )
-                    : Image.network(
-                        displayCover,
+                    : Image(
+                        image: coverImage,
                         width: 48,
                         height: 48,
                         fit: BoxFit.cover,
-                        cacheWidth: (48 * MediaQuery.of(context).devicePixelRatio).round(),
+                        gaplessPlayback: true,
                       ),
               ),
               title: Text(p.name),

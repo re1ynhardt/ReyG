@@ -9,6 +9,9 @@ class Track {
   /// True for tracks that were uploaded locally by a developer account
   /// straight from the app (requirement #11), before the real backend exists.
   final bool uploadedLocally;
+  /// Public URL of the lyrics text object in storage, or empty if this
+  /// track has no lyrics added yet.
+  final String lyricsUrl;
 
   const Track({
     required this.id,
@@ -19,7 +22,10 @@ class Track {
     required this.audioUrl,
     required this.duration,
     this.uploadedLocally = false,
+    this.lyricsUrl = '',
   });
+
+  bool get hasLyrics => lyricsUrl.isNotEmpty;
 
   factory Track.fromJson(Map<String, dynamic> json) => Track(
         id: json['id'] as String,
@@ -30,6 +36,7 @@ class Track {
         audioUrl: json['audio_url'] as String,
         duration: Duration(seconds: (json['duration_seconds'] as num?)?.toInt() ?? 0),
         uploadedLocally: json['uploaded_locally'] as bool? ?? false,
+        lyricsUrl: json['lyrics_url'] as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -41,5 +48,18 @@ class Track {
         'audio_url': audioUrl,
         'duration_seconds': duration.inSeconds,
         'uploaded_locally': uploadedLocally,
+        'lyrics_url': lyricsUrl,
       };
+
+  Track copyWith({String? lyricsUrl}) => Track(
+        id: id,
+        title: title,
+        artist: artist,
+        album: album,
+        coverUrl: coverUrl,
+        audioUrl: audioUrl,
+        duration: duration,
+        uploadedLocally: uploadedLocally,
+        lyricsUrl: lyricsUrl ?? this.lyricsUrl,
+      );
 }

@@ -4,6 +4,7 @@ import '../../models/track.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/library_provider.dart';
+import '../../services/download_service.dart';
 
 class PlaylistPickerSheet extends StatelessWidget {
   const PlaylistPickerSheet({super.key, required this.track});
@@ -12,8 +13,11 @@ class PlaylistPickerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
+    final downloads = context.watch<DownloadService>();
     final isDeveloper = context.watch<AuthProvider>().isDeveloper;
     final isFav = library.isFavorite(track.id);
+    final isCached = downloads.isCached(track.id);
+    final isCaching = downloads.isCaching(track.id);
     return SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -25,6 +29,26 @@ class PlaylistPickerSheet extends StatelessWidget {
               library.toggleFavorite(track.id);
               Navigator.pop(context);
             },
+          ),
+          ListTile(
+            leading: isCaching
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(isCached ? Icons.download_done : Icons.download_outlined),
+            title: Text(isCached ? context.tr('remove_from_cache') : context.tr('cache_track')),
+            onTap: isCaching
+                ? null
+                : () {
+                    Navigator.pop(context);
+                    if (isCached) {
+                      downloads.removeCachedTrack(track.id);
+                    } else {
+                      downloads.cacheTrack(track);
+                    }
+                  },
           ),
           const Divider(height: 1),
           Padding(

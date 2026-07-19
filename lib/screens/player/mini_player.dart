@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/player_provider.dart';
+import '../../widgets/cached_cover_image.dart';
 import 'now_playing_screen.dart';
 
 class MiniPlayer extends StatelessWidget {
@@ -78,10 +79,10 @@ class MiniPlayer extends StatelessWidget {
             // BackdropFilter below blurs, giving the bar a soft glow/gradient
             // tinted by the track's own artwork.
             Positioned.fill(
-              child: Image.network(
-                track.coverUrl,
+              child: CachedCoverImage(
+                track: track,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(color: Theme.of(context).cardColor),
+                errorBuilder: (context) => Container(color: Theme.of(context).cardColor),
               ),
             ),
             Positioned.fill(
@@ -101,13 +102,11 @@ class MiniPlayer extends StatelessWidget {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(5),
-                          child: Image.network(
-                            track.coverUrl,
+                          child: CachedCoverImage(
+                            track: track,
                             width: 40,
                             height: 40,
-                            fit: BoxFit.cover,
-                            cacheWidth: (40 * MediaQuery.of(context).devicePixelRatio).round(),
-                            errorBuilder: (_, __, ___) => Container(
+                            errorBuilder: (context) => Container(
                               width: 40,
                               height: 40,
                               color: Theme.of(context).scaffoldBackgroundColor,
@@ -133,12 +132,37 @@ class MiniPlayer extends StatelessWidget {
                           ),
                         ),
                         IconButton(
+                          iconSize: 22,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          icon: const Icon(Icons.skip_previous_rounded),
+                          onPressed: player.previous,
+                        ),
+                        const SizedBox(width: 2),
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                           icon: Icon(player.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
                           onPressed: player.togglePlayPause,
                         ),
+                        const SizedBox(width: 2),
                         IconButton(
+                          iconSize: 22,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                           icon: const Icon(Icons.skip_next_rounded),
                           onPressed: player.next,
+                        ),
+                        const SizedBox(width: 2),
+                        IconButton(
+                          iconSize: 20,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          icon: Icon(player.isRepeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded),
+                          color: player.isRepeatOn
+                              ? Theme.of(context).colorScheme.secondary
+                              : Theme.of(context).hintColor,
+                          onPressed: player.toggleRepeat,
                         ),
                       ],
                     ),

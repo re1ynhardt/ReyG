@@ -19,6 +19,7 @@ class MockApiService implements ApiService {
   late List<Track> _tracks;
   final List<Playlist> _playlists = [];
   final Set<String> _favoriteIds = {};
+  final Map<String, String> _lyrics = {};
 
   // Very naive fake "users" store, just for the demo.
   final Map<String, String> _accounts = {
@@ -28,8 +29,7 @@ class MockApiService implements ApiService {
 
   @override
   void restoreSession(AppUser user) {
-    // No-op: the mock backend keeps everything in memory for the demo and
-    // doesn't need a token to know who's "current".
+    _currentMockUser = user;
   }
 
   void _seed() {
@@ -101,13 +101,15 @@ class MockApiService implements ApiService {
       throw ApiException('Invalid email or password');
     }
     final isDeveloper = email.trim().toLowerCase() == 'dev@example.com';
-    return AppUser(
+    final user = AppUser(
       id: 'u_${email.hashCode}',
       email: email,
       displayName: email.split('@').first,
       isDeveloper: isDeveloper,
       token: 'mock-token-${_rng.nextInt(999999)}',
     );
+    _currentMockUser = user;
+    return user;
   }
 
   @override
@@ -122,13 +124,15 @@ class MockApiService implements ApiService {
       throw ApiException('An account with this email already exists');
     }
     _accounts[key] = password;
-    return AppUser(
+    final user = AppUser(
       id: 'u_${email.hashCode}',
       email: email,
       displayName: displayName.isEmpty ? email.split('@').first : displayName,
       isDeveloper: false,
       token: 'mock-token-${_rng.nextInt(999999)}',
     );
+    _currentMockUser = user;
+    return user;
   }
 
   @override
@@ -182,11 +186,33 @@ class MockApiService implements ApiService {
     await Future.delayed(const Duration(milliseconds: 200));
     _tracks.removeWhere((t) => t.id == trackId);
     _favoriteIds.remove(trackId);
+    _lyrics.remove(trackId);
     for (var i = 0; i < _playlists.length; i++) {
       _playlists[i] = _playlists[i].copyWith(
         trackIds: _playlists[i].trackIds.where((id) => id != trackId).toList(),
       );
     }
+  }
+
+  @override
+  Future<String?> fetchLyrics(Track track) async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    return _lyrics[track.id];
+  }
+
+  @override
+  Future<Track> setLyrics({required String trackId, required String lyrics}) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can add lyrics');
+    }
+    _lyrics[trackId] = lyrics;
+    final idx = _tracks.indexWhere((t) => t.id == trackId);
+    if (idx == -1) throw ApiException('Track not found');
+    final updated = _tracks[idx].copyWith(lyricsUrl: 'mock://lyrics/$trackId');
+    _tracks[idx] = updated;
+    return updated;
   }
 
   @override
@@ -237,6 +263,29 @@ class MockApiService implements ApiService {
   }
 
   @override
+  Future<Playlist> uploadPlaylistCover({required String playlistId, required String localImagePath}) async {
+    await Future.delayed(_networkDelay);
+    final idx = _playlists.indexWhere((p) => p.id == playlistId);
+    if (idx == -1) throw ApiException('Playlist not found');
+    // In production this uploads the bytes to Yandex Object Storage and
+    // returns the resulting public URL. Here we just reuse the local file
+    // path so the picked image can still be previewed on-device.
+    final updated = _playlists[idx].copyWith(coverUrl: localImagePath);
+    _playlists[idx] = updated;
+    return updated;
+  }
+
+  @override
+  Future<Playlist> removePlaylistCover({required String playlistId}) async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    final idx = _playlists.indexWhere((p) => p.id == playlistId);
+    if (idx == -1) throw ApiException('Playlist not found');
+    final updated = _playlists[idx].copyWith(coverUrl: '');
+    _playlists[idx] = updated;
+    return updated;
+  }
+
+  @override
   Future<List<String>> fetchFavoriteIds() async {
     await Future.delayed(const Duration(milliseconds: 200));
     return _favoriteIds.toList();
@@ -250,6 +299,21 @@ class MockApiService implements ApiService {
     } else {
       _favoriteIds.remove(trackId);
     }
+  }
+
+  AppUser? _currentMockUser;
+
+  @override
+  Future<AppUser> uploadAvatar(String localImagePath) async {
+    await Future.delayed(_networkDelay);
+    // In production this uploads the bytes to Yandex Object Storage and
+    // returns the resulting public URL. Here we just reuse the local file
+    // path so the picked image can still be previewed on-device.
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final updated = current.copyWith(avatarUrl: localImagePath);
+    _currentMockUser = updated;
+    return updated;
   }
 }
 
