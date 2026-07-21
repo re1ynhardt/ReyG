@@ -65,6 +65,12 @@ class CommunityProvider extends ChangeNotifier {
   /// Playlists owned by [userId], for the Community profile screen.
   Future<List<Playlist>> fetchUserPlaylists(String userId) => _api.fetchPlaylistsByUser(userId);
 
+  /// Whether the signed-in user is allowed to see [userId]'s liked
+  /// tracks and playlists, per that account's privacy setting. The
+  /// Community profile screen checks this before showing (or hiding)
+  /// the tracks/playlists cards.
+  Future<bool> canViewUserLibrary(String userId) => _api.canViewUserLibrary(userId);
+
   /// Developer-only. Permanently deletes [userId]'s account, its
   /// playlists and its favorites, then drops it from the locally cached
   /// user list so the Community tab reflects the removal immediately.

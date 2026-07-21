@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/user.dart';
@@ -40,8 +42,21 @@ class _CommunityScreenState extends State<CommunityScreen> {
     }
 
     final users = community.users;
-    final favoriteCount = users.where((u) => community.isFavoriteUser(u.id)).length;
     final currentUserId = context.watch<AuthProvider>().user?.id;
+
+    // Pull the signed-in user's own entry out so it can always be pinned
+    // to the very top of the list, above the favorites/all-users groups.
+    AppUser? selfUser;
+    final others = <AppUser>[];
+    for (final u in users) {
+      if (currentUserId != null && u.id == currentUserId) {
+        selfUser = u;
+      } else {
+        others.add(u);
+      }
+    }
+    final hasSelf = selfUser != null;
+    final favoriteCount = others.where((u) => community.isFavoriteUser(u.id)).length;
 
     return Scaffold(
       appBar: AppBar(title: Text(context.tr('community'))),
@@ -72,6 +87,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 onSubmitted: (_) => setState(() {}),
               ),
             ),
+            if (hasSelf) _SelfProfileCard(user: selfUser!),
             if (community.loading && users.isEmpty)
               const Expanded(child: Center(child: CircularProgressIndicator()))
             else if (users.isEmpty)
@@ -88,12 +104,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 child: ListView.builder(
                   padding: const EdgeInsets.only(bottom: 100),
                   // +2 optional header rows when there's a favorites
-                  // group to separate from the rest of the list.
-                  itemCount: users.length + (favoriteCount > 0 && favoriteCount < users.length ? 2 : 0),
+                  // group to separate from the rest of the (self-
+                  // excluded) list.
+                  itemCount: others.length + (favoriteCount > 0 && favoriteCount < others.length ? 2 : 0),
                   itemBuilder: (context, i) {
-                    final showHeaders = favoriteCount > 0 && favoriteCount < users.length;
+                    final showHeaders = favoriteCount > 0 && favoriteCount < others.length;
                     if (!showHeaders) {
-                      return _UserTile(user: users[i], currentUserId: currentUserId);
+                      return _UserTile(user: others[i], currentUserId: currentUserId);
                     }
                     if (i == 0) {
                       return SectionHeader(title: context.tr('favorite_users_section'), topSpacing: 4);
@@ -102,11 +119,108 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       return SectionHeader(title: context.tr('all_users_section'));
                     }
                     final userIndex = i < favoriteCount + 1 ? i - 1 : i - 2;
-                    return _UserTile(user: users[userIndex], currentUserId: currentUserId);
+                    return _UserTile(user: others[userIndex], currentUserId: currentUserId);
                   },
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Frosted-glass card that always sits above the rest of the Community
+/// list, pinned outside the scrolling list itself so it reads as a
+/// separate "you" section rather than just another row. Tapping it opens
+/// the same read-only profile screen as everyone else's tile.
+class _SelfProfileCard extends StatelessWidget {
+  const _SelfProfileCard({required this.user});
+
+  final AppUser user;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(22),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => UserProfileScreen(user: user)),
+              ),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      theme.colorScheme.primary.withOpacity(0.16),
+                      theme.colorScheme.secondary.withOpacity(0.10),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: theme.colorScheme.primary.withOpacity(0.35)),
+                ),
+                child: Row(
+                  children: [
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        ArtistAvatar(imageUrl: user.avatarUrl, radius: 24),
+                        if (user.isDeveloper)
+                          Positioned(
+                            right: -2,
+                            bottom: -2,
+                            child: Container(
+                              padding: const EdgeInsets.all(1.5),
+                              decoration: BoxDecoration(
+                                color: theme.scaffoldBackgroundColor,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.verified, size: 16, color: theme.colorScheme.primary),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            context.tr('your_profile_section'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.3,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            user.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: theme.hintColor),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

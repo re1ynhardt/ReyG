@@ -128,6 +128,24 @@ abstract class ApiService {
   /// Marks/unmarks [userId] as a favorite account for the current user.
   Future<void> setFavoriteUser({required String userId, required bool favorite});
 
+  // --- Privacy --------------------------------------------------------------
+  /// Updates the current user's setting for who can see their liked
+  /// tracks and playlists on their Community profile (one of the
+  /// [LikesPrivacy] values) and returns the updated [AppUser].
+  Future<AppUser> setLikesPrivacy(String privacy);
+
+  /// Whether the current session is allowed to see [userId]'s liked
+  /// tracks and playlists on their Community profile, based on that
+  /// user's [LikesPrivacy] setting. Always true for the user's own
+  /// profile and for developer accounts, which can see everyone's
+  /// regardless of the setting.
+  Future<bool> canViewUserLibrary(String userId);
+
+  /// Changes the current user's password to [newPassword]. No old
+  /// password is required — the caller is already authenticated via the
+  /// active session. Throws [ApiException] if [newPassword] is empty.
+  Future<void> setPassword(String newPassword);
+
   // --- Featured tags (Home screen) ----------------------------------------
   /// The 4 hashtags currently pinned to the Home screen, in display order.
   /// Same list for every account — always length 4, with `''` marking an

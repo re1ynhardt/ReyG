@@ -445,6 +445,41 @@ class MockApiService implements ApiService {
   }
 
   @override
+  Future<AppUser> setLikesPrivacy(String privacy) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (!LikesPrivacy.values.contains(privacy)) {
+      throw ApiException('Invalid privacy value: $privacy');
+    }
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final updated = current.copyWith(likesPrivacy: privacy);
+    _currentMockUser = updated;
+    return updated;
+  }
+
+  @override
+  Future<bool> canViewUserLibrary(String userId) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    // The mock backend only ever exposes the signed-in account's own
+    // liked tracks/playlists (see fetchFavoriteTracksByUser and
+    // fetchPlaylistsByUser above, which return `const []` for anyone
+    // else) so there's nothing else to gate here.
+    final current = _currentMockUser;
+    if (current == null) return false;
+    if (current.id == userId || current.isDeveloper) return true;
+    return true;
+  }
+
+  @override
+  Future<void> setPassword(String newPassword) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (newPassword.isEmpty) throw ApiException('Password is required');
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    _accounts[current.email.trim().toLowerCase()] = newPassword;
+  }
+
+  @override
   Future<List<String>> fetchFeaturedTags() async {
     await Future.delayed(const Duration(milliseconds: 150));
     return List.unmodifiable(_featuredTags);

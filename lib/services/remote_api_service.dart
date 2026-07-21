@@ -38,6 +38,9 @@ import 'api_service.dart';
 ///   DELETE /community/users/{id}                          -> 204 (developer-only)
 ///   GET    /community/favorite_users                       -> [user_id, ...]
 ///   PUT    /community/favorite_users/{id}  {favorite: bool} -> 204
+///   PUT    /account/privacy     {privacy: "all"|"favorites"|"none"} -> user json
+///   GET    /community/users/{id}/can_view                  -> {can_view: bool}
+///   PUT    /account/password    {password: string}          -> 204 (no old password required)
 ///   GET    /tracks/{id}/lyrics                          -> {lyrics: string} or 404 if none
 ///   PUT    /tracks/{id}/lyrics  {lyrics: string}        -> track json (developer-only)
 ///   POST   /tracks/{id}/hashtags {hashtag: string}      -> track json
@@ -284,6 +287,34 @@ class RemoteApiService implements ApiService {
       _u('/community/favorite_users/$userId'),
       headers: _headers,
       body: jsonEncode({'favorite': favorite}),
+    );
+    _throwIfError(res);
+  }
+
+  @override
+  Future<AppUser> setLikesPrivacy(String privacy) async {
+    final res = await http.put(
+      _u('/account/privacy'),
+      headers: _headers,
+      body: jsonEncode({'privacy': privacy}),
+    );
+    _throwIfError(res);
+    return AppUser.fromJson(jsonDecode(res.body));
+  }
+
+  @override
+  Future<bool> canViewUserLibrary(String userId) async {
+    final res = await http.get(_u('/community/users/$userId/can_view'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as Map<String, dynamic>)['can_view'] as bool? ?? false;
+  }
+
+  @override
+  Future<void> setPassword(String newPassword) async {
+    final res = await http.put(
+      _u('/account/password'),
+      headers: _headers,
+      body: jsonEncode({'password': newPassword}),
     );
     _throwIfError(res);
   }

@@ -1,10 +1,12 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../l10n/app_strings.dart';
+import '../../models/user.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme/app_theme.dart';
@@ -21,6 +23,210 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _maxAvatarBytes = 5 * 1024 * 1024;
 
   bool _uploadingAvatar = false;
+  bool _updatingPrivacy = false;
+  bool _updatingPassword = false;
+
+  InputDecoration _passwordFieldDecoration(
+    ThemeData theme, {
+    required String label,
+    required bool obscured,
+    required VoidCallback onToggle,
+  }) {
+    final outline = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(color: theme.colorScheme.primary.withOpacity(0.12)),
+    );
+    return InputDecoration(
+      labelText: label,
+      isDense: true,
+      filled: true,
+      fillColor: theme.colorScheme.primary.withOpacity(0.05),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      border: outline,
+      enabledBorder: outline,
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: theme.colorScheme.secondary, width: 1.4),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
+      ),
+      suffixIcon: IconButton(
+        splashRadius: 18,
+        icon: Icon(
+          obscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+          size: 20,
+          color: theme.colorScheme.primary.withOpacity(0.45),
+        ),
+        onPressed: onToggle,
+      ),
+    );
+  }
+
+  Future<void> _changePassword() async {
+    if (_updatingPassword) return;
+    final formKey = GlobalKey<FormState>();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    bool obscureNew = true;
+    bool obscureConfirm = true;
+
+    final newPassword = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          dTheme.colorScheme.surface.withOpacity(0.72),
+                          dTheme.colorScheme.surface.withOpacity(0.5),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                    ),
+                    child: Form(
+                      key: formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: dTheme.colorScheme.secondary.withOpacity(0.14),
+                            ),
+                            child: Icon(Icons.lock_outline, color: dTheme.colorScheme.secondary, size: 22),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            dialogContext.tr('change_password'),
+                            textAlign: TextAlign.center,
+                            style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 22),
+                          TextFormField(
+                            controller: newController,
+                            obscureText: obscureNew,
+                            autofocus: true,
+                            style: dTheme.textTheme.bodyMedium,
+                            decoration: _passwordFieldDecoration(
+                              dTheme,
+                              label: dialogContext.tr('new_password'),
+                              obscured: obscureNew,
+                              onToggle: () => setDialogState(() => obscureNew = !obscureNew),
+                            ),
+                            validator: (v) =>
+                                (v == null || v.isEmpty) ? dialogContext.tr('password_required') : null,
+                          ),
+                          const SizedBox(height: 14),
+                          TextFormField(
+                            controller: confirmController,
+                            obscureText: obscureConfirm,
+                            style: dTheme.textTheme.bodyMedium,
+                            decoration: _passwordFieldDecoration(
+                              dTheme,
+                              label: dialogContext.tr('confirm_password'),
+                              obscured: obscureConfirm,
+                              onToggle: () => setDialogState(() => obscureConfirm = !obscureConfirm),
+                            ),
+                            validator: (v) => v != newController.text ? dialogContext.tr('password_mismatch') : null,
+                          ),
+                          const SizedBox(height: 24),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextButton(
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: dTheme.colorScheme.primary.withOpacity(0.7),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  ),
+                                  onPressed: () => Navigator.of(dialogContext).pop(),
+                                  child: Text(dialogContext.tr('cancel')),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: dTheme.colorScheme.secondary,
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  ),
+                                  onPressed: () {
+                                    if (formKey.currentState!.validate()) {
+                                      Navigator.of(dialogContext).pop(newController.text);
+                                    }
+                                  },
+                                  child: Text(dialogContext.tr('save')),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (newPassword == null || !mounted) return;
+
+    setState(() => _updatingPassword = true);
+    try {
+      await context.read<AuthProvider>().setPassword(newPassword);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_trStatic(context, 'password_updated'))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _updatingPassword = false);
+    }
+  }
+
+  Future<void> _setLikesPrivacy(String privacy) async {
+    if (_updatingPrivacy) return;
+    setState(() => _updatingPrivacy = true);
+    try {
+      await context.read<AuthProvider>().setLikesPrivacy(privacy);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _updatingPrivacy = false);
+    }
+  }
 
   String _initial(String? name) {
     if (name == null || name.isEmpty) return '?';
@@ -152,6 +358,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
               ),
             ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.lock_outline),
+            title: Text(context.tr('change_password')),
+            onTap: _updatingPassword ? null : _changePassword,
+            trailing: _updatingPassword
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.chevron_right),
+          ),
+          const Divider(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(context.tr('privacy_section'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text(
+              context.tr('likes_privacy_subtitle'),
+              style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+            ),
+          ),
+          RadioListTile<String>(
+            title: Text(context.tr('privacy_everyone')),
+            subtitle: Text(context.tr('privacy_everyone_desc')),
+            value: LikesPrivacy.all,
+            groupValue: auth.user?.likesPrivacy ?? LikesPrivacy.all,
+            onChanged: _updatingPrivacy ? null : (v) => _setLikesPrivacy(v!),
+          ),
+          RadioListTile<String>(
+            title: Text(context.tr('privacy_favorites_only')),
+            subtitle: Text(context.tr('privacy_favorites_only_desc')),
+            value: LikesPrivacy.favoritesOnly,
+            groupValue: auth.user?.likesPrivacy ?? LikesPrivacy.all,
+            onChanged: _updatingPrivacy ? null : (v) => _setLikesPrivacy(v!),
+          ),
+          RadioListTile<String>(
+            title: Text(context.tr('privacy_nobody')),
+            subtitle: Text(context.tr('privacy_nobody_desc')),
+            value: LikesPrivacy.none,
+            groupValue: auth.user?.likesPrivacy ?? LikesPrivacy.all,
+            onChanged: _updatingPrivacy ? null : (v) => _setLikesPrivacy(v!),
           ),
           const Divider(height: 24),
           Padding(

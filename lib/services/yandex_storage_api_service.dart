@@ -229,6 +229,7 @@ class YandexStorageApiService implements ApiService {
         'is_developer': config.developerEmails.contains(normalizedEmail),
         'token': _randomId(),
         'avatar_url': '',
+        'likes_privacy': LikesPrivacy.all,
       };
       items.add(row);
       return row;
@@ -264,6 +265,7 @@ class YandexStorageApiService implements ApiService {
         isDeveloper: row['is_developer'] as bool? ?? false,
         token: row['token'] as String,
         avatarUrl: row['avatar_url'] as String? ?? '',
+        likesPrivacy: row['likes_privacy'] as String? ?? LikesPrivacy.all,
       );
 
   /// Every call below re-checks that our token still belongs to an account
@@ -523,20 +525,100 @@ class YandexStorageApiService implements ApiService {
               isDeveloper: r['is_developer'] as bool? ?? false,
               token: '',
               avatarUrl: r['avatar_url'] as String? ?? '',
+              likesPrivacy: r['likes_privacy'] as String? ?? LikesPrivacy.all,
             ))
         .toList();
     users.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
     return users;
   }
 
+  /// Whether [viewer] (a row from [_usersKey]) may see [userId]'s liked
+  /// tracks and playlists, per that account's [LikesPrivacy] setting.
+  /// Always true for the account's own row and for developer accounts.
+  Future<bool> _checkCanViewLibrary(Map<String, dynamic> viewer, String userId) async {
+    if (viewer['id'] == userId) return true;
+    if (viewer['is_developer'] == true) return true;
+    final usersData = await _readCollection(_usersKey);
+    final items = (usersData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final owner = items.cast<Map<String, dynamic>?>().firstWhere((r) => r?['id'] == userId, orElse: () => null);
+    if (owner == null) return false;
+    final privacy = owner['likes_privacy'] as String? ?? LikesPrivacy.all;
+    switch (privacy) {
+      case LikesPrivacy.none:
+        return false;
+      case LikesPrivacy.favoritesOnly:
+        // "Only favorites" means only accounts THIS profile's owner has
+        // favorited may view it — i.e. a row {user_id: userId,
+        // favorite_user_id: viewer['id']} in the favorite-accounts table.
+        final favData = await _readCollection(_favoriteUsersKey);
+        final favItems = (favData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+        return favItems.any((r) => r['user_id'] == userId && r['favorite_user_id'] == viewer['id']);
+      case LikesPrivacy.all:
+      default:
+        return true;
+    }
+  }
+
+  /// Whether the current session may see [userId]'s liked tracks and
+  /// playlists — see [_checkCanViewLibrary].
+  @override
+  Future<bool> canViewUserLibrary(String userId) async {
+    final viewer = await _currentUserRow();
+    return _checkCanViewLibrary(viewer, userId);
+  }
+
+  /// Changes the current user's password. No old password is required —
+  /// the request is already authenticated via the current session token.
+  @override
+  Future<void> setPassword(String newPassword) async {
+    if (newPassword.isEmpty) {
+      throw ApiException('Password is required');
+    }
+    final user = await _currentUserRow();
+    await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == user['id'],
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Unauthorized — no account matches this session');
+      match['password_hash'] = _hashPassword(newPassword);
+      return null;
+    });
+  }
+
+  /// Updates the current user's [LikesPrivacy] setting.
+  @override
+  Future<AppUser> setLikesPrivacy(String privacy) async {
+    if (!LikesPrivacy.values.contains(privacy)) {
+      throw ApiException('Invalid privacy value: $privacy');
+    }
+    final user = await _currentUserRow();
+    final row = await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == user['id'],
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Unauthorized — no account matches this session');
+      match['likes_privacy'] = privacy;
+      return match;
+    });
+    return _userFromRow(row);
+  }
+
   /// Tracks [userId] has liked (favorited), newest-liked first — same
   /// ordering [LibraryProvider] applies to the current account's own
   /// [fetchFavoriteIds] (the backend appends favorites oldest → newest,
   /// so this reverses them on the way out). Used by the Community
-  /// profile screen's "Tracks" tile.
+  /// profile screen's "Tracks" tile. Returns an empty list (rather than
+  /// throwing) when [userId]'s privacy setting hides it from the current
+  /// session — callers that need to distinguish "private" from "no
+  /// liked tracks" should check [canViewUserLibrary] first.
   @override
   Future<List<Track>> fetchFavoriteTracksByUser(String userId) async {
-    await _currentUserRow();
+    final viewer = await _currentUserRow();
+    if (!await _checkCanViewLibrary(viewer, userId)) return const [];
     final favData = await _readCollection(_favoritesKey);
     final favItems = (favData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     final trackIds = favItems.where((r) => r['user_id'] == userId).map((r) => r['track_id'] as String).toList().reversed;
@@ -560,7 +642,8 @@ class YandexStorageApiService implements ApiService {
   /// session instead of an arbitrary [userId]).
   @override
   Future<List<Playlist>> fetchPlaylistsByUser(String userId) async {
-    await _currentUserRow();
+    final viewer = await _currentUserRow();
+    if (!await _checkCanViewLibrary(viewer, userId)) return const [];
     final data = await _readCollection(_playlistsKey);
     final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     return items.where((r) => r['owner_id'] == userId).map(_playlistFromRow).toList();

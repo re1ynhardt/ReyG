@@ -97,6 +97,35 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Updates who can see the current user's liked tracks and playlists
+  /// (see [LikesPrivacy]) and persists the change locally. Throws
+  /// [ApiException] on failure.
+  Future<void> setLikesPrivacy(String privacy) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      final updated = await _api.setLikesPrivacy(privacy);
+      await _persist(updated);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Changes the current user's password. No old password is required —
+  /// the request rides on the already-authenticated session. Throws
+  /// [ApiException] on failure (e.g. empty password).
+  Future<void> setPassword(String newPassword) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      await _api.setPassword(newPassword);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> logout() async {
     _user = null;
     _status = AuthStatus.unauthenticated;

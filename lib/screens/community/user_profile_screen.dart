@@ -32,11 +32,17 @@ class UserProfileScreen extends StatefulWidget {
 class _UserProfileScreenState extends State<UserProfileScreen> {
   late Future<List<Track>> _tracksFuture;
   late Future<List<Playlist>> _playlistsFuture;
+  /// Whether the signed-in account is allowed to see this user's liked
+  /// tracks and playlists at all, per their privacy setting — checked
+  /// once up front so the UI can show a "private" message instead of an
+  /// empty list when it's hidden rather than just empty.
+  late Future<bool> _canViewFuture;
 
   @override
   void initState() {
     super.initState();
     final community = context.read<CommunityProvider>();
+    _canViewFuture = community.canViewUserLibrary(widget.user.id);
     _tracksFuture = community.fetchUserLikedTracks(widget.user.id);
     _playlistsFuture = community.fetchUserPlaylists(widget.user.id);
   }
@@ -44,6 +50,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   void _reload() {
     final community = context.read<CommunityProvider>();
     setState(() {
+      _canViewFuture = community.canViewUserLibrary(widget.user.id);
       _tracksFuture = community.fetchUserLikedTracks(widget.user.id);
       _playlistsFuture = community.fetchUserPlaylists(widget.user.id);
     });
@@ -134,37 +141,56 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 ],
               ),
             ),
-            FutureBuilder<List<Track>>(
-              future: _tracksFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
+            FutureBuilder<bool>(
+              future: _canViewFuture,
+              builder: (context, canViewSnapshot) {
+                if (canViewSnapshot.connectionState != ConnectionState.done) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
                     child: Center(child: CircularProgressIndicator()),
                   );
                 }
-                final tracks = snapshot.data ?? const [];
-                return _FavoritesGlassCard(
-                  tracks: tracks,
-                  onOpen: tracks.isEmpty
-                      ? null
-                      : () => Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) => _UserTracksScreen(title: context.tr('favorites'), tracks: tracks),
-                          )),
+                if (canViewSnapshot.data != true) {
+                  return _PrivateLibraryCard();
+                }
+                return Column(
+                  children: [
+                    FutureBuilder<List<Track>>(
+                      future: _tracksFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState != ConnectionState.done) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        final tracks = snapshot.data ?? const [];
+                        return _FavoritesGlassCard(
+                          tracks: tracks,
+                          onOpen: tracks.isEmpty
+                              ? null
+                              : () => Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (_) =>
+                                        _UserTracksScreen(title: context.tr('favorites'), tracks: tracks),
+                                  )),
+                        );
+                      },
+                    ),
+                    FutureBuilder<List<Playlist>>(
+                      future: _playlistsFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState != ConnectionState.done) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        final playlists = snapshot.data ?? const [];
+                        return _PlaylistsGlassCard(playlists: playlists);
+                      },
+                    ),
+                  ],
                 );
-              },
-            ),
-            FutureBuilder<List<Playlist>>(
-              future: _playlistsFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-                final playlists = snapshot.data ?? const [];
-                return _PlaylistsGlassCard(playlists: playlists);
               },
             ),
           ],
@@ -173,6 +199,47 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       bottomNavigationBar: player.hasTrack
           ? const Padding(padding: EdgeInsets.only(bottom: 6), child: MiniPlayer())
           : null,
+    );
+  }
+}
+
+/// Shown instead of the liked-tracks/playlists cards when this profile's
+/// privacy setting hides them from the signed-in account (see
+/// [CommunityProvider.canViewUserLibrary]).
+class _PrivateLibraryCard extends StatelessWidget {
+  const _PrivateLibraryCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: theme.cardColor.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: theme.dividerColor.withOpacity(0.4)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.lock_outline, color: theme.hintColor),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    context.tr('user_library_private'),
+                    style: TextStyle(color: theme.hintColor),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
