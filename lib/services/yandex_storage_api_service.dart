@@ -230,6 +230,7 @@ class YandexStorageApiService implements ApiService {
         'token': _randomId(),
         'avatar_url': '',
         'likes_privacy': LikesPrivacy.all,
+        'bio': '',
       };
       items.add(row);
       return row;
@@ -266,6 +267,7 @@ class YandexStorageApiService implements ApiService {
         token: row['token'] as String,
         avatarUrl: row['avatar_url'] as String? ?? '',
         likesPrivacy: row['likes_privacy'] as String? ?? LikesPrivacy.all,
+        bio: row['bio'] as String? ?? '',
       );
 
   /// Every call below re-checks that our token still belongs to an account
@@ -526,6 +528,7 @@ class YandexStorageApiService implements ApiService {
               token: '',
               avatarUrl: r['avatar_url'] as String? ?? '',
               likesPrivacy: r['likes_privacy'] as String? ?? LikesPrivacy.all,
+              bio: r['bio'] as String? ?? '',
             ))
         .toList();
     users.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
@@ -587,6 +590,30 @@ class YandexStorageApiService implements ApiService {
     });
   }
 
+  /// Developer-only. Sets [userId]'s password without requiring their
+  /// old one — same hashing as [setPassword], just targeting another
+  /// account's row instead of the caller's own.
+  @override
+  Future<void> setUserPassword({required String userId, required String newPassword}) async {
+    if (newPassword.isEmpty) {
+      throw ApiException('Password is required');
+    }
+    final caller = await _currentUserRow();
+    if (caller['is_developer'] != true) {
+      throw ApiException('Only developer accounts can change other accounts\' passwords');
+    }
+    await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == userId,
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Account not found');
+      match['password_hash'] = _hashPassword(newPassword);
+      return null;
+    });
+  }
+
   /// Updates the current user's [LikesPrivacy] setting.
   @override
   Future<AppUser> setLikesPrivacy(String privacy) async {
@@ -602,6 +629,27 @@ class YandexStorageApiService implements ApiService {
           );
       if (match == null) throw ApiException('Unauthorized — no account matches this session');
       match['likes_privacy'] = privacy;
+      return match;
+    });
+    return _userFromRow(row);
+  }
+
+  /// Updates the current user's profile description, shown under their
+  /// avatar on their Community profile.
+  @override
+  Future<AppUser> setBio(String bio) async {
+    if (bio.length > AppUser.bioMaxLength) {
+      throw ApiException('Bio must be ${AppUser.bioMaxLength} characters or fewer');
+    }
+    final user = await _currentUserRow();
+    final row = await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == user['id'],
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Unauthorized — no account matches this session');
+      match['bio'] = bio;
       return match;
     });
     return _userFromRow(row);

@@ -81,6 +81,12 @@ class CommunityProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Developer-only. Sets [userId]'s password without requiring their
+  /// old one — used by the debug sheet on a user's Community profile.
+  Future<void> setUserPassword({required String userId, required String newPassword}) {
+    return _api.setUserPassword(userId: userId, newPassword: newPassword);
+  }
+
   /// Toggles whether [userId] is one of the signed-in user's favorite
   /// accounts. Updates optimistically (so the star/list reorders
   /// instantly) and rolls back if the backend call fails.

@@ -275,6 +275,16 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<void> setUserPassword({required String userId, required String newPassword}) async {
+    final res = await http.put(
+      _u('/community/users/$userId/password'),
+      headers: _headers,
+      body: jsonEncode({'password': newPassword}),
+    );
+    _throwIfError(res);
+  }
+
+  @override
   Future<List<String>> fetchFavoriteUserIds() async {
     final res = await http.get(_u('/community/favorite_users'), headers: _headers);
     _throwIfError(res);
@@ -317,6 +327,17 @@ class RemoteApiService implements ApiService {
       body: jsonEncode({'password': newPassword}),
     );
     _throwIfError(res);
+  }
+
+  @override
+  Future<AppUser> setBio(String bio) async {
+    final res = await http.put(
+      _u('/account/bio'),
+      headers: _headers,
+      body: jsonEncode({'bio': bio}),
+    );
+    _throwIfError(res);
+    return AppUser.fromJson(jsonDecode(res.body));
   }
 
   @override

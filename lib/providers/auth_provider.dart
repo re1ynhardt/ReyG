@@ -112,6 +112,21 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Updates the current user's profile description (shown under their
+  /// avatar on their Community profile) and persists it locally. Throws
+  /// [ApiException] if [bio] is longer than [AppUser.bioMaxLength].
+  Future<void> setBio(String bio) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      final updated = await _api.setBio(bio);
+      await _persist(updated);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
   /// Changes the current user's password. No old password is required —
   /// the request rides on the already-authenticated session. Throws
   /// [ApiException] on failure (e.g. empty password).

@@ -97,8 +97,9 @@ abstract class ApiService {
   // --- Community ------------------------------------------------------------
   /// Every registered account, for the Community tab. Returned tokens are
   /// always blank (this isn't the current session, so there's nothing to
-  /// restore) — only [AppUser.displayName], [AppUser.avatarUrl] and
-  /// [AppUser.isDeveloper] are meant to be shown in that list.
+  /// restore) — only [AppUser.displayName], [AppUser.avatarUrl],
+  /// [AppUser.isDeveloper] and [AppUser.bio] are meant to be shown in
+  /// that list (and on the per-account profile screen it opens into).
   Future<List<AppUser>> fetchAllUsers();
 
   /// Tracks [userId] has liked (favorited), newest-liked first. Used by
@@ -118,6 +119,13 @@ abstract class ApiService {
   /// stay available to everyone else). Implementations reject this for
   /// non-developer callers.
   Future<void> deleteUserAccount(String userId);
+
+  /// Developer-only: sets [userId]'s password to [newPassword] without
+  /// requiring their old one. Mirrors [setPassword] but targets another
+  /// account — used by the developer debug sheet on a user's Community
+  /// profile. Throws [ApiException] if [newPassword] is empty or the
+  /// caller isn't a developer.
+  Future<void> setUserPassword({required String userId, required String newPassword});
 
   /// IDs of accounts the current user has marked as a favorite. This is
   /// per-account (each user keeps their own list) and separate from
@@ -145,6 +153,11 @@ abstract class ApiService {
   /// password is required — the caller is already authenticated via the
   /// active session. Throws [ApiException] if [newPassword] is empty.
   Future<void> setPassword(String newPassword);
+
+  /// Sets the current user's profile description, shown under their
+  /// avatar on their Community profile. Throws [ApiException] if [bio]
+  /// is longer than [AppUser.bioMaxLength]. Pass `''` to clear it.
+  Future<AppUser> setBio(String bio);
 
   // --- Featured tags (Home screen) ----------------------------------------
   /// The 4 hashtags currently pinned to the Home screen, in display order.

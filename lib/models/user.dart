@@ -17,6 +17,10 @@ abstract class LikesPrivacy {
 }
 
 class AppUser {
+  /// Enforced by Settings' bio editor and by backends that accept
+  /// [ApiService.setBio] — anything longer is rejected.
+  static const bioMaxLength = 150;
+
   final String id;
   final String email;
   final String displayName;
@@ -31,6 +35,11 @@ class AppUser {
   /// Who can see this user's liked tracks and playlists — one of the
   /// [LikesPrivacy] values. Defaults to [LikesPrivacy.all].
   final String likesPrivacy;
+  /// Short free-text profile description (max [bioMaxLength] characters), set from
+  /// Settings and shown under the avatar on this user's Community
+  /// profile. Empty when the user hasn't set one, in which case nothing
+  /// is shown.
+  final String bio;
 
   const AppUser({
     required this.id,
@@ -40,6 +49,7 @@ class AppUser {
     required this.token,
     this.avatarUrl = '',
     this.likesPrivacy = LikesPrivacy.all,
+    this.bio = '',
   });
 
   factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
@@ -50,6 +60,7 @@ class AppUser {
         token: json['token'] as String? ?? '',
         avatarUrl: json['avatar_url'] as String? ?? '',
         likesPrivacy: json['likes_privacy'] as String? ?? LikesPrivacy.all,
+        bio: json['bio'] as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -60,9 +71,10 @@ class AppUser {
         'token': token,
         'avatar_url': avatarUrl,
         'likes_privacy': likesPrivacy,
+        'bio': bio,
       };
 
-  AppUser copyWith({String? avatarUrl, String? likesPrivacy}) => AppUser(
+  AppUser copyWith({String? avatarUrl, String? likesPrivacy, String? bio}) => AppUser(
         id: id,
         email: email,
         displayName: displayName,
@@ -70,5 +82,6 @@ class AppUser {
         token: token,
         avatarUrl: avatarUrl ?? this.avatarUrl,
         likesPrivacy: likesPrivacy ?? this.likesPrivacy,
+        bio: bio ?? this.bio,
       );
 }

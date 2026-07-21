@@ -383,6 +383,7 @@ class MockApiService implements ApiService {
         isDeveloper: isDeveloper,
         token: '',
         avatarUrl: isSelf ? current!.avatarUrl : '',
+        bio: isSelf ? current!.bio : '',
       );
     }).toList();
     users.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
@@ -477,6 +478,35 @@ class MockApiService implements ApiService {
     final current = _currentMockUser;
     if (current == null) throw ApiException('Not logged in');
     _accounts[current.email.trim().toLowerCase()] = newPassword;
+  }
+
+  @override
+  Future<void> setUserPassword({required String userId, required String newPassword}) async {
+    await Future.delayed(_networkDelay);
+    if (newPassword.isEmpty) throw ApiException('Password is required');
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can change other accounts\' passwords');
+    }
+    final email = _accounts.keys.cast<String?>().firstWhere(
+          (e) => 'u_${e.hashCode}' == userId,
+          orElse: () => null,
+        );
+    if (email == null) throw ApiException('Account not found');
+    _accounts[email] = newPassword;
+  }
+
+  @override
+  Future<AppUser> setBio(String bio) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (bio.length > AppUser.bioMaxLength) {
+      throw ApiException('Bio must be ${AppUser.bioMaxLength} characters or fewer');
+    }
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final updated = current.copyWith(bio: bio);
+    _currentMockUser = updated;
+    return updated;
   }
 
   @override

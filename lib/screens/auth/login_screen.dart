@@ -101,7 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'update version 1.1.8 \nby re1ynhardt',
+                    'version 1.2.7 \nby re1ynhardt',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 11, color: Theme.of(context).hintColor),
                   ),

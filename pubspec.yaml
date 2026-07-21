@@ -1,7 +1,7 @@
 name: audio_player_app
 description: "flutter audio player with back playback and back on the flut"
 publish_to: 'none'
-version: 1.1.8+1
+version: 1.2.7+1
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -66,5 +66,5 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/icon.png"
   # Optional: adaptive icon for Android 8+ (nicer round/square masking)
-  adaptive_icon_background: "#000000"
   adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  adaptive_icon_background: "assets/icon/icon_background.png"

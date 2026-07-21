@@ -80,7 +80,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final isDeveloper = auth.isDeveloper;
     final isSelf = auth.user?.id == widget.user.id;
     final isFavorite = community.isFavoriteUser(widget.user.id);
-    final user = widget.user;
+    // widget.user is a snapshot taken when this screen was pushed (e.g.
+    // from the Community list), so it goes stale the moment the signed-in
+    // user edits their own name/avatar/bio in Settings. For your own
+    // profile, prefer the live AuthProvider copy so those edits show up
+    // immediately without needing to reopen this screen.
+    final user = isSelf ? (auth.user ?? widget.user) : widget.user;
 
     return Scaffold(
       appBar: AppBar(
@@ -141,6 +146,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 ],
               ),
             ),
+            if (user.bio.isNotEmpty) _UserBioWidget(bio: user.bio),
             FutureBuilder<bool>(
               future: _canViewFuture,
               builder: (context, canViewSnapshot) {
@@ -206,6 +212,82 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 /// Shown instead of the liked-tracks/playlists cards when this profile's
 /// privacy setting hides them from the signed-in account (see
 /// [CommunityProvider.canViewUserLibrary]).
+/// Short profile description shown right under the avatar/name row on a
+/// Community profile (see [AppUser.bio], set from Settings). Only
+/// rendered when the account has actually set one.
+class _UserBioWidget extends StatelessWidget {
+  const _UserBioWidget({required this.bio});
+
+  final String bio;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // Unlike the neutral frosted-glass cards below (favorites/playlists),
+    // this one leans on the theme's accent color so it reads as the
+    // "voice" of the profile rather than another data card in the list.
+    final accent = theme.colorScheme.secondary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      child: Container(
+        width: double.infinity,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [accent.withOpacity(0.20), accent.withOpacity(0.05)],
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: accent.withOpacity(0.4), width: 1.2),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -8,
+              top: -14,
+              child: Icon(Icons.format_quote_rounded, size: 72, color: accent.withOpacity(0.14)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.format_quote_rounded, size: 15, color: accent),
+                      const SizedBox(width: 6),
+                      Text(
+                        context.tr('bio_title').toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.6,
+                          color: accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    bio,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      height: 1.4,
+                      fontStyle: FontStyle.italic,
+                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.9),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PrivateLibraryCard extends StatelessWidget {
   const _PrivateLibraryCard();
 
@@ -548,12 +630,15 @@ class _PlaylistGlassRow extends StatelessWidget {
 
 /// Developer-only "Отладка пользователя" sheet: shows the account's email,
 /// ID and role in a frosted-glass panel (matching [_FavoritesGlassCard] /
-/// [_PlaylistsGlassCard]), plus a destructive "Delete account" action.
+/// [_PlaylistsGlassCard]), plus a "Change password" action and a
+/// destructive "Delete account" action.
 ///
 /// The actual password is never shown — the backend only ever stores a
 /// salted hash (see `YandexStorageApiService._hashPassword`), which is
 /// exactly the point of hashing: even developer tooling can't recover the
 /// original password, so there's nothing recoverable to display here.
+/// "Change password" sets a brand-new one instead, the same way a
+/// forgot-password reset would, without ever needing the old value.
 class _UserDebugSheet extends StatefulWidget {
   const _UserDebugSheet({required this.user});
 
@@ -565,6 +650,204 @@ class _UserDebugSheet extends StatefulWidget {
 
 class _UserDebugSheetState extends State<_UserDebugSheet> {
   bool _deleting = false;
+  bool _changingPassword = false;
+
+  InputDecoration _passwordFieldDecoration(
+    ThemeData theme, {
+    required String label,
+    required bool obscured,
+    required VoidCallback onToggle,
+  }) {
+    final outline = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(color: theme.colorScheme.primary.withOpacity(0.12)),
+    );
+    return InputDecoration(
+      labelText: label,
+      isDense: true,
+      filled: true,
+      fillColor: theme.colorScheme.primary.withOpacity(0.05),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      border: outline,
+      enabledBorder: outline,
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: theme.colorScheme.secondary, width: 1.4),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
+      ),
+      suffixIcon: IconButton(
+        splashRadius: 18,
+        icon: Icon(
+          obscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+          size: 20,
+          color: theme.colorScheme.primary.withOpacity(0.45),
+        ),
+        onPressed: onToggle,
+      ),
+    );
+  }
+
+  /// Developer-only: sets [widget.user]'s password directly, no old
+  /// password required. Same frosted-glass dialog style as the
+  /// self-service "change password" flow in Settings.
+  Future<void> _changePassword() async {
+    if (_changingPassword) return;
+    final formKey = GlobalKey<FormState>();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    bool obscureNew = true;
+    bool obscureConfirm = true;
+
+    final newPassword = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          dTheme.colorScheme.surface.withOpacity(0.72),
+                          dTheme.colorScheme.surface.withOpacity(0.5),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                    ),
+                    child: Form(
+                      key: formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: dTheme.colorScheme.secondary.withOpacity(0.14),
+                            ),
+                            child: Icon(Icons.lock_outline, color: dTheme.colorScheme.secondary, size: 22),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            dialogContext.tr('change_password'),
+                            textAlign: TextAlign.center,
+                            style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            widget.user.displayName,
+                            textAlign: TextAlign.center,
+                            style: dTheme.textTheme.bodySmall?.copyWith(color: dTheme.hintColor),
+                          ),
+                          const SizedBox(height: 22),
+                          TextFormField(
+                            controller: newController,
+                            obscureText: obscureNew,
+                            autofocus: true,
+                            style: dTheme.textTheme.bodyMedium,
+                            decoration: _passwordFieldDecoration(
+                              dTheme,
+                              label: dialogContext.tr('new_password'),
+                              obscured: obscureNew,
+                              onToggle: () => setDialogState(() => obscureNew = !obscureNew),
+                            ),
+                            validator: (v) =>
+                                (v == null || v.isEmpty) ? dialogContext.tr('password_required') : null,
+                          ),
+                          const SizedBox(height: 14),
+                          TextFormField(
+                            controller: confirmController,
+                            obscureText: obscureConfirm,
+                            style: dTheme.textTheme.bodyMedium,
+                            decoration: _passwordFieldDecoration(
+                              dTheme,
+                              label: dialogContext.tr('confirm_password'),
+                              obscured: obscureConfirm,
+                              onToggle: () => setDialogState(() => obscureConfirm = !obscureConfirm),
+                            ),
+                            validator: (v) => v != newController.text ? dialogContext.tr('password_mismatch') : null,
+                          ),
+                          const SizedBox(height: 24),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextButton(
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: dTheme.colorScheme.primary.withOpacity(0.7),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  ),
+                                  onPressed: () => Navigator.of(dialogContext).pop(),
+                                  child: Text(dialogContext.tr('cancel')),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: dTheme.colorScheme.secondary,
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  ),
+                                  onPressed: () {
+                                    if (formKey.currentState!.validate()) {
+                                      Navigator.of(dialogContext).pop(newController.text);
+                                    }
+                                  },
+                                  child: Text(dialogContext.tr('save')),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (newPassword == null || !mounted) return;
+
+    setState(() => _changingPassword = true);
+    try {
+      await context.read<CommunityProvider>().setUserPassword(userId: widget.user.id, newPassword: newPassword);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(context.trOnce('user_password_updated'))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => _changingPassword = false);
+    }
+  }
 
   Future<void> _confirmDelete() async {
     final theme = Theme.of(context);
@@ -673,6 +956,22 @@ class _UserDebugSheetState extends State<_UserDebugSheet> {
                     ),
                   ),
                   const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.secondary),
+                      onPressed: _changingPassword ? null : _changePassword,
+                      icon: _changingPassword
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.lock_reset),
+                      label: Text(context.tr('change_password')),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(

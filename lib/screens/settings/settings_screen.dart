@@ -25,6 +25,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _uploadingAvatar = false;
   bool _updatingPrivacy = false;
   bool _updatingPassword = false;
+  bool _updatingBio = false;
 
   InputDecoration _passwordFieldDecoration(
     ThemeData theme, {
@@ -214,6 +215,233 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Lets the user set/edit their profile description (max
+  /// [AppUser.bioMaxLength] chars), shown under their avatar on their
+  /// Community profile. Same frosted-glass dialog style as
+  /// [_changePassword].
+  Future<void> _editBio() async {
+    if (_updatingBio) return;
+    final controller = TextEditingController(text: context.read<AuthProvider>().user?.bio ?? '');
+
+    final newBio = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      dTheme.colorScheme.surface.withOpacity(0.72),
+                      dTheme.colorScheme.surface.withOpacity(0.5),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: dTheme.colorScheme.secondary.withOpacity(0.14),
+                      ),
+                      child: Icon(Icons.short_text, color: dTheme.colorScheme.secondary, size: 22),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      dialogContext.tr('bio_title'),
+                      textAlign: TextAlign.center,
+                      style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 22),
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      maxLength: AppUser.bioMaxLength,
+                      style: dTheme.textTheme.bodyMedium,
+                      decoration: InputDecoration(
+                        hintText: dialogContext.tr('bio_hint'),
+                        filled: true,
+                        fillColor: dTheme.colorScheme.primary.withOpacity(0.05),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(color: dTheme.colorScheme.secondary, width: 1.4),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            style: TextButton.styleFrom(
+                              foregroundColor: dTheme.colorScheme.primary.withOpacity(0.7),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                            onPressed: () => Navigator.of(dialogContext).pop(),
+                            child: Text(dialogContext.tr('cancel')),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: dTheme.colorScheme.secondary,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                            onPressed: () => Navigator.of(dialogContext).pop(controller.text.trim()),
+                            child: Text(dialogContext.tr('save')),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (newBio == null || !mounted) return;
+
+    setState(() => _updatingBio = true);
+    try {
+      await context.read<AuthProvider>().setBio(newBio);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _updatingBio = false);
+    }
+  }
+
+  Future<void> _confirmLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      dTheme.colorScheme.surface.withOpacity(0.72),
+                      dTheme.colorScheme.surface.withOpacity(0.5),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: dTheme.colorScheme.error.withOpacity(0.18)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: dTheme.colorScheme.error.withOpacity(0.14),
+                      ),
+                      child: Icon(Icons.logout, color: dTheme.colorScheme.error, size: 22),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      dialogContext.tr('logout_confirm_title'),
+                      textAlign: TextAlign.center,
+                      style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      dialogContext.tr('logout_confirm_body'),
+                      textAlign: TextAlign.center,
+                      style: dTheme.textTheme.bodyMedium?.copyWith(color: dTheme.hintColor, fontSize: 13.5),
+                    ),
+                    const SizedBox(height: 22),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            style: TextButton.styleFrom(
+                              foregroundColor: dTheme.colorScheme.primary.withOpacity(0.7),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                            onPressed: () => Navigator.of(dialogContext).pop(false),
+                            child: Text(dialogContext.tr('cancel')),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: dTheme.colorScheme.error,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                            onPressed: () => Navigator.of(dialogContext).pop(true),
+                            child: Text(dialogContext.tr('logout')),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    context.read<AuthProvider>().logout();
+  }
+
   Future<void> _setLikesPrivacy(String privacy) async {
     if (_updatingPrivacy) return;
     setState(() => _updatingPrivacy = true);
@@ -371,6 +599,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   )
                 : const Icon(Icons.chevron_right),
           ),
+          ListTile(
+            leading: const Icon(Icons.short_text),
+            title: Text(context.tr('bio_title')),
+            subtitle: Text(
+              (auth.user?.bio.isNotEmpty ?? false) ? auth.user!.bio : context.tr('bio_hint'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: _updatingBio ? null : _editBio,
+            trailing: _updatingBio
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.chevron_right),
+          ),
           const Divider(height: 24),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -464,7 +709,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
             title: Text(context.tr('logout'), style: const TextStyle(color: Colors.red)),
-            onTap: () => auth.logout(),
+            onTap: _confirmLogout,
           ),
         ],
       ),
