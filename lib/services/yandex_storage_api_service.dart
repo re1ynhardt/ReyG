@@ -78,10 +78,13 @@ class YandexStorageApiService implements ApiService {
   static const _tracksKey = 'db/tracks.json';
   static const _playlistsKey = 'db/playlists.json';
   static const _favoritesKey = 'db/favorites.json';
+  static const _favoriteUsersKey = 'db/favorite_users.json';
   static const _featuredTagsKey = 'db/featured_tags.json';
+  static const _artistAvatarsKey = 'db/artist_avatars.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
   static const _avatarsPrefix = 'media/avatars/';
+  static const _artistAvatarsPrefix = 'media/artist_avatars/';
   static const _lyricsPrefix = 'media/lyrics/';
   static const _maxRetries = 8;
   static const _maxAvatarBytes = 5 * 1024 * 1024;
@@ -503,6 +506,156 @@ class YandexStorageApiService implements ApiService {
     return _userFromRow(row);
   }
 
+  // --- Community --------------------------------------------------------
+  /// Every registered account, for the Community tab. Tokens are stripped
+  /// (set to `''`) on the way out — these rows aren't the caller's own
+  /// session, just other accounts' public profile info to list.
+  @override
+  Future<List<AppUser>> fetchAllUsers() async {
+    await _currentUserRow();
+    final data = await _readCollection(_usersKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final users = items
+        .map((r) => AppUser(
+              id: r['id'] as String,
+              email: r['email'] as String,
+              displayName: r['display_name'] as String,
+              isDeveloper: r['is_developer'] as bool? ?? false,
+              token: '',
+              avatarUrl: r['avatar_url'] as String? ?? '',
+            ))
+        .toList();
+    users.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+    return users;
+  }
+
+  /// Tracks [userId] has liked (favorited), newest-liked first — same
+  /// ordering [LibraryProvider] applies to the current account's own
+  /// [fetchFavoriteIds] (the backend appends favorites oldest → newest,
+  /// so this reverses them on the way out). Used by the Community
+  /// profile screen's "Tracks" tile.
+  @override
+  Future<List<Track>> fetchFavoriteTracksByUser(String userId) async {
+    await _currentUserRow();
+    final favData = await _readCollection(_favoritesKey);
+    final favItems = (favData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final trackIds = favItems.where((r) => r['user_id'] == userId).map((r) => r['track_id'] as String).toList().reversed;
+
+    final tracksData = await _readCollection(_tracksKey);
+    final trackItems = (tracksData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final trackRowsById = {for (final r in trackItems) r['id'] as String: r};
+
+    final result = <Track>[];
+    for (final id in trackIds) {
+      final row = trackRowsById[id];
+      if (row != null) result.add(_trackFromRow(row));
+    }
+    return result;
+  }
+
+  /// Playlists owned by [userId]. Read-only from the Community profile
+  /// screen's point of view — mutating endpoints (add/remove track,
+  /// delete, cover) still only accept the caller's own playlists (see
+  /// [fetchPlaylists], which checks `owner_id` against the current
+  /// session instead of an arbitrary [userId]).
+  @override
+  Future<List<Playlist>> fetchPlaylistsByUser(String userId) async {
+    await _currentUserRow();
+    final data = await _readCollection(_playlistsKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    return items.where((r) => r['owner_id'] == userId).map(_playlistFromRow).toList();
+  }
+
+  /// Developer-only. Deletes [userId]'s account row, every playlist it
+  /// owns (best-effort deleting their cover objects too), every
+  /// favorites entry it made, and its avatar file. Tracks it may have
+  /// uploaded are left in the shared catalog — this only removes the
+  /// account and things that belong solely to it.
+  @override
+  Future<void> deleteUserAccount(String userId) async {
+    final caller = await _currentUserRow();
+    if (caller['is_developer'] != true) {
+      throw ApiException('Only developer accounts can delete accounts');
+    }
+
+    String? avatarUrl;
+    await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final idx = items.indexWhere((r) => (r as Map)['id'] == userId);
+      if (idx == -1) throw ApiException('Account not found');
+      avatarUrl = (items[idx] as Map)['avatar_url'] as String?;
+      items.removeAt(idx);
+      return null;
+    });
+
+    final coverUrls = <String?>[];
+    await _withCollection(_playlistsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final owned = items.where((r) => (r as Map)['owner_id'] == userId);
+      for (final r in owned) {
+        coverUrls.add((r as Map)['cover_url'] as String?);
+      }
+      items.removeWhere((r) => (r as Map)['owner_id'] == userId);
+      return null;
+    });
+
+    await _withCollection(_favoritesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.removeWhere((r) => (r as Map)['user_id'] == userId);
+      return null;
+    });
+
+    // Drop the deleted account both from its own favorite-accounts list
+    // and from everyone else's — a dangling favorite pointing at a
+    // now-nonexistent account would otherwise linger forever.
+    await _withCollection(_favoriteUsersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.removeWhere(
+          (r) => (r as Map)['user_id'] == userId || r['favorite_user_id'] == userId);
+      return null;
+    });
+
+    // Best-effort cleanup of files — the account/playlist metadata is
+    // already gone either way, so a failure here shouldn't surface as an
+    // error to the UI.
+    for (final url in [avatarUrl, ...coverUrls]) {
+      final key = _keyFromPublicUrl(url);
+      if (key == null) continue;
+      try {
+        await _deleteObject(key);
+      } catch (_) {
+        // Non-fatal.
+      }
+    }
+  }
+
+  /// IDs of accounts the current user has favorited, for pinning them to
+  /// the top of the Community tab. Distinct collection from track
+  /// favorites ([fetchFavoriteIds]/[_favoritesKey]) — this one's rows are
+  /// `{user_id, favorite_user_id}`.
+  @override
+  Future<List<String>> fetchFavoriteUserIds() async {
+    final user = await _currentUserRow();
+    final data = await _readCollection(_favoriteUsersKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    return items.where((r) => r['user_id'] == user['id']).map((r) => r['favorite_user_id'] as String).toList();
+  }
+
+  @override
+  Future<void> setFavoriteUser({required String userId, required bool favorite}) async {
+    final user = await _currentUserRow();
+    await _withCollection(_favoriteUsersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final exists = items.any((r) => r['user_id'] == user['id'] && r['favorite_user_id'] == userId);
+      if (favorite && !exists) {
+        items.add({'user_id': user['id'], 'favorite_user_id': userId});
+      } else if (!favorite && exists) {
+        items.removeWhere((r) => r['user_id'] == user['id'] && r['favorite_user_id'] == userId);
+      }
+      return null;
+    });
+  }
+
   Future<String> _uploadMediaFile(String localPath, String prefix) async {
     final bytes = await File(localPath).readAsBytes();
     final ext = localPath.contains('.') ? localPath.substring(localPath.lastIndexOf('.')) : '';
@@ -847,6 +1000,118 @@ class YandexStorageApiService implements ApiService {
       }
     }
     throw ApiException('Too many concurrent updates to featured tags, please try again');
+  }
+
+  // --- Artists --------------------------------------------------------
+  /// Developer-set circular avatar URLs, keyed by exact artist name.
+  /// Stored as a single plain JSON object (not the usual
+  /// `{items: [...]}` collection shape) — same as [fetchFeaturedTags].
+  @override
+  Future<Map<String, String>> fetchArtistAvatars() async {
+    await _currentUserRow();
+    final obj = await _getObject(_artistAvatarsKey);
+    if (obj == null) return {};
+    final decoded = jsonDecode(utf8.decode(obj.bytes)) as Map<String, dynamic>;
+    return decoded.map((k, v) => MapEntry(k, v as String));
+  }
+
+  /// Developer-only. Uploads/overwrites the avatar for [artist]: rejects
+  /// anything over 5 MB before touching the network, uploads the image
+  /// to `media/artist_avatars/` (public-read, same as the account avatar
+  /// and playlist covers), then records the new URL in the artist
+  /// avatars object. Uses the same optimistic-concurrency retry loop as
+  /// [setFeaturedTags], just against this key instead.
+  @override
+  Future<String> uploadArtistAvatar({required String artist, required String localImagePath}) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only developer accounts can set artist avatars');
+    }
+
+    final file = File(localImagePath);
+    final sizeBytes = await file.length();
+    if (sizeBytes > _maxAvatarBytes) {
+      throw ApiException('Image is too large — max 5 MB');
+    }
+
+    final avatarUrl = await _uploadMediaFile(localImagePath, _artistAvatarsPrefix);
+
+    for (var attempt = 0; attempt < _maxRetries; attempt++) {
+      final obj = await _getObject(_artistAvatarsKey);
+      final data = obj == null
+          ? <String, dynamic>{}
+          : jsonDecode(utf8.decode(obj.bytes)) as Map<String, dynamic>;
+      final oldAvatarUrl = data[artist] as String?;
+      data[artist] = avatarUrl;
+      final body = utf8.encode(jsonEncode(data));
+      try {
+        if (obj == null) {
+          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', createOnly: true);
+        } else {
+          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', ifMatch: obj.etag);
+        }
+        // Best-effort cleanup of the previous avatar so old images don't
+        // pile up in the bucket forever. Non-fatal: the new avatar is
+        // already saved either way.
+        final oldKey = _keyFromPublicUrl(oldAvatarUrl);
+        if (oldKey != null) {
+          try {
+            await _deleteObject(oldKey);
+          } catch (_) {
+            // Non-fatal.
+          }
+        }
+        return avatarUrl;
+      } on _ConflictException {
+        await Future.delayed(Duration(milliseconds: (50 * (1 << attempt)).clamp(0, 1000)) +
+            Duration(milliseconds: _rng.nextInt(50)));
+        continue;
+      }
+    }
+    throw ApiException('Too many concurrent updates to artist avatars, please try again');
+  }
+
+  /// Developer-only. Clears [artist]'s custom avatar and best-effort
+  /// deletes the underlying object from storage, so the UI falls back
+  /// to that artist's most recent track cover again (handled
+  /// client-side — see `LibraryProvider.avatarForArtist`).
+  @override
+  Future<void> removeArtistAvatar(String artist) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only developer accounts can remove artist avatars');
+    }
+
+    for (var attempt = 0; attempt < _maxRetries; attempt++) {
+      final obj = await _getObject(_artistAvatarsKey);
+      final data = obj == null
+          ? <String, dynamic>{}
+          : jsonDecode(utf8.decode(obj.bytes)) as Map<String, dynamic>;
+      final oldAvatarUrl = data[artist] as String?;
+      data.remove(artist);
+      final body = utf8.encode(jsonEncode(data));
+      try {
+        if (obj == null) {
+          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', createOnly: true);
+        } else {
+          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', ifMatch: obj.etag);
+        }
+        final oldKey = _keyFromPublicUrl(oldAvatarUrl);
+        if (oldKey != null) {
+          try {
+            await _deleteObject(oldKey);
+          } catch (_) {
+            // Non-fatal.
+          }
+        }
+        return;
+      } on _ConflictException {
+        await Future.delayed(Duration(milliseconds: (50 * (1 << attempt)).clamp(0, 1000)) +
+            Duration(milliseconds: _rng.nextInt(50)));
+        continue;
+      }
+    }
+    throw ApiException('Too many concurrent updates to artist avatars, please try again');
   }
 }
 

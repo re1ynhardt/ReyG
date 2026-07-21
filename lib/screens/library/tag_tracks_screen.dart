@@ -5,6 +5,7 @@ import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/cached_cover_image.dart';
 import '../../widgets/track_list_tile.dart';
+import '../player/mini_player.dart';
 import 'playlist_picker_sheet.dart';
 
 /// Every track carrying hashtag [tag], opened by tapping one of the
@@ -104,6 +105,12 @@ class TagTracksScreen extends StatelessWidget {
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
+      bottomNavigationBar: player.hasTrack
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: const MiniPlayer(),
+            )
+          : null,
     );
   }
 }

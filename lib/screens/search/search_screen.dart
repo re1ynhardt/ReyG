@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_state.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
+import '../../widgets/artist_result_card.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/track_list_tile.dart';
+import '../library/artist_tracks_screen.dart';
 import '../library/playlist_picker_sheet.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -82,6 +85,72 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  Widget _buildArtistCard(BuildContext context, LibraryProvider library, PlayerProvider player, String artist) {
+    final artistTracks = library.tracks.where((t) => t.artist == artist).toList();
+    final preview = artistTracks.take(3).toList();
+    return ArtistResultCard(
+      artist: artist,
+      avatarUrl: library.avatarForArtist(artist),
+      trackCount: artistTracks.length,
+      previewTracks: preview,
+      playingTrackId: player.currentTrack?.id,
+      onListen: () {
+        if (artistTracks.isEmpty) return;
+        final index = Random().nextInt(artistTracks.length);
+        library.commitSearchHistory(_controller.text);
+        player.playQueue(artistTracks, startIndex: index);
+      },
+      onOpen: () {
+        library.commitSearchHistory(_controller.text);
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ArtistTracksScreen(artist: artist)));
+      },
+      onTrackTap: (i) {
+        library.commitSearchHistory(_controller.text);
+        player.playQueue(preview, startIndex: i);
+      },
+      onTrackMore: (track) => showModalBottomSheet(
+        context: context,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        builder: (_) => PlaylistPickerSheet(track: track),
+      ),
+    );
+  }
+
+  Widget _buildResults(BuildContext context, LibraryProvider library, PlayerProvider player) {
+    final artists = library.searchArtists(_controller.text);
+    final tracks = library.searchResults;
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 100),
+      children: [
+        if (artists.isNotEmpty) ...[
+          SectionHeader(title: context.tr('artists'), topSpacing: 4),
+          for (final artist in artists) _buildArtistCard(context, library, player, artist),
+        ],
+        if (tracks.isNotEmpty) ...[
+          SectionHeader(title: context.tr('tracks'), topSpacing: artists.isEmpty ? 4 : 12),
+          for (var i = 0; i < tracks.length; i++)
+            TrackListTile(
+              track: tracks[i],
+              isPlaying: player.currentTrack?.id == tracks[i].id,
+              onTap: () {
+                context.read<LibraryProvider>().commitSearchHistory(_controller.text);
+                player.playQueue(tracks, startIndex: i);
+              },
+              trailing: IconButton(
+                icon: const Icon(Icons.more_vert),
+                onPressed: () => showModalBottomSheet(
+                  context: context,
+                  backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                  builder: (_) => PlaylistPickerSheet(track: tracks[i]),
+                ),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
@@ -137,36 +206,14 @@ class _SearchScreenState extends State<SearchScreen> {
           Expanded(
             child: _controller.text.isEmpty
                 ? _buildHistory(context, library)
-                : library.searchResults.isEmpty
+                : (library.searchResults.isEmpty && library.searchArtists(_controller.text).isEmpty)
                     ? Center(
                         child: Text(
                           context.tr('no_results'),
                           style: TextStyle(color: Theme.of(context).hintColor),
                         ),
                       )
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 100),
-                        itemCount: library.searchResults.length,
-                        itemBuilder: (context, i) {
-                          final track = library.searchResults[i];
-                          return TrackListTile(
-                            track: track,
-                            isPlaying: player.currentTrack?.id == track.id,
-                            onTap: () {
-                              context.read<LibraryProvider>().commitSearchHistory(_controller.text);
-                              player.playQueue(library.searchResults, startIndex: i);
-                            },
-                            trailing: IconButton(
-                              icon: const Icon(Icons.more_vert),
-                              onPressed: () => showModalBottomSheet(
-                                context: context,
-                                backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-                                builder: (_) => PlaylistPickerSheet(track: track),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                    : _buildResults(context, library, player),
           ),
         ],
       ),

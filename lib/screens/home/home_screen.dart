@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_state.dart';
 import '../../providers/player_provider.dart';
+import '../community/community_screen.dart';
 import '../library/library_screen.dart';
 import '../player/mini_player.dart';
 import '../search/search_screen.dart';
@@ -21,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _tabs = const [
     HomeTab(),
     SearchScreen(),
+    CommunityScreen(),
     LibraryScreen(),
     SettingsScreen(),
   ];
@@ -44,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
             items: [
               BottomNavigationBarItem(icon: const Icon(Icons.home_filled), label: context.tr('home')),
               BottomNavigationBarItem(icon: const Icon(Icons.search), label: context.tr('search')),
+              BottomNavigationBarItem(icon: const Icon(Icons.groups), label: context.tr('community')),
               BottomNavigationBarItem(icon: const Icon(Icons.library_music), label: context.tr('library')),
               BottomNavigationBarItem(icon: const Icon(Icons.settings), label: context.tr('settings')),
             ],

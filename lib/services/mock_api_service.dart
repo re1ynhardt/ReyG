@@ -19,10 +19,13 @@ class MockApiService implements ApiService {
   late List<Track> _tracks;
   final List<Playlist> _playlists = [];
   final Set<String> _favoriteIds = {};
+  final Set<String> _favoriteUserIds = {};
   final Map<String, String> _lyrics = {};
   /// The 4 developer-picked tags shown on Home, in slot order. `''` means
   /// that slot hasn't been set yet.
   List<String> _featuredTags = List<String>.filled(4, '');
+  /// Developer-set artist avatar URLs, keyed by exact artist name.
+  final Map<String, String> _artistAvatars = {};
 
   // Very naive fake "users" store, just for the demo.
   final Map<String, String> _accounts = {
@@ -367,6 +370,81 @@ class MockApiService implements ApiService {
   }
 
   @override
+  Future<List<AppUser>> fetchAllUsers() async {
+    await Future.delayed(_networkDelay);
+    final users = _accounts.keys.map((email) {
+      final isDeveloper = email == 'dev@example.com';
+      final current = _currentMockUser;
+      final isSelf = current != null && current.email.trim().toLowerCase() == email;
+      return AppUser(
+        id: 'u_${email.hashCode}',
+        email: email,
+        displayName: isSelf ? current!.displayName : email.split('@').first,
+        isDeveloper: isDeveloper,
+        token: '',
+        avatarUrl: isSelf ? current!.avatarUrl : '',
+      );
+    }).toList();
+    users.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+    return users;
+  }
+
+  @override
+  Future<List<Track>> fetchFavoriteTracksByUser(String userId) async {
+    await Future.delayed(_networkDelay);
+    // Mock has no real per-user favorites tracking beyond the current
+    // session; just show the signed-in user's own liked tracks, if any.
+    final current = _currentMockUser;
+    if (current == null || current.id != userId) return const [];
+    final trackMap = {for (final t in _tracks) t.id: t};
+    return _favoriteIds.map((id) => trackMap[id]).whereType<Track>().toList();
+  }
+
+  @override
+  Future<List<Playlist>> fetchPlaylistsByUser(String userId) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || current.id != userId) return const [];
+    return List.unmodifiable(_playlists);
+  }
+
+  @override
+  Future<void> deleteUserAccount(String userId) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can delete accounts');
+    }
+    final email = _accounts.keys.cast<String?>().firstWhere(
+          (e) => 'u_${e.hashCode}' == userId,
+          orElse: () => null,
+        );
+    if (email == null) throw ApiException('Account not found');
+    _accounts.remove(email);
+    _favoriteUserIds.remove(userId);
+    if (current.id == userId) {
+      _playlists.clear();
+      _favoriteIds.clear();
+    }
+  }
+
+  @override
+  Future<List<String>> fetchFavoriteUserIds() async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    return _favoriteUserIds.toList();
+  }
+
+  @override
+  Future<void> setFavoriteUser({required String userId, required bool favorite}) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (favorite) {
+      _favoriteUserIds.add(userId);
+    } else {
+      _favoriteUserIds.remove(userId);
+    }
+  }
+
+  @override
   Future<List<String>> fetchFeaturedTags() async {
     await Future.delayed(const Duration(milliseconds: 150));
     return List.unmodifiable(_featuredTags);
@@ -391,6 +469,36 @@ class MockApiService implements ApiService {
     }
     _featuredTags = cleaned;
     return List.unmodifiable(_featuredTags);
+  }
+
+  @override
+  Future<Map<String, String>> fetchArtistAvatars() async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    return Map.unmodifiable(_artistAvatars);
+  }
+
+  @override
+  Future<String> uploadArtistAvatar({required String artist, required String localImagePath}) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can set artist avatars');
+    }
+    // In production this uploads the bytes to Yandex Object Storage and
+    // returns the resulting public URL. Here we just reuse the local
+    // file path so the picked image can still be previewed on-device.
+    _artistAvatars[artist] = localImagePath;
+    return localImagePath;
+  }
+
+  @override
+  Future<void> removeArtistAvatar(String artist) async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can remove artist avatars');
+    }
+    _artistAvatars.remove(artist);
   }
 }
 

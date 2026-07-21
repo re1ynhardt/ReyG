@@ -43,8 +43,23 @@ class AppState extends ChangeNotifier {
 extension L10nX on BuildContext {
   /// Translates [key] using the currently selected app language.
   /// Listens for changes so widgets rebuild when the language is switched.
+  ///
+  /// Only call this from a `build` method (or something else that runs
+  /// during Flutter's build phase, like a widget's `builder` callback).
+  /// Calling it from an event handler or after an `await` — i.e. outside
+  /// build — trips Provider's "Tried to listen ... from outside of the
+  /// widget tree" assertion. Use [trOnce] in those spots instead.
   String tr(String key) {
     final locale = Provider.of<AppState>(this, listen: true).locale;
+    return AppStrings.t(locale, key);
+  }
+
+  /// Same lookup as [tr], but never subscribes to [AppState] — safe to
+  /// call from event handlers, `onPressed` callbacks, or any code that
+  /// runs after an `await` (e.g. building a SnackBar's text once an
+  /// async call finishes), where [tr] would throw.
+  String trOnce(String key) {
+    final locale = Provider.of<AppState>(this, listen: false).locale;
     return AppStrings.t(locale, key);
   }
 }

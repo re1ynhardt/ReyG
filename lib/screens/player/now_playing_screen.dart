@@ -105,18 +105,52 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
   }
 
   /// Pushes [ArtistTracksScreen], sliding up from the bottom to match the
-  /// swipe-up gesture that triggers it.
+  /// swipe-up gesture that triggers it. Uses the exact same transition as
+  /// pushing NowPlayingScreen itself (see mini_player.dart) — same blur +
+  /// slide, same curves, same durations — so opening and closing this
+  /// screen looks and feels identical to opening and closing Now Playing,
+  /// on both ends: the push, and the pop (whether from a drag-release or
+  /// a direct back action).
   Future<void> _openArtistTracks(BuildContext context, String artist) {
     return Navigator.of(context).push(
       PageRouteBuilder(
+        // Without this, the Navigator doesn't keep NowPlayingScreen
+        // painted underneath while this route is on top — so dragging
+        // ArtistTracksScreen down during the pull-to-dismiss gesture
+        // reveals empty black canvas instead of the screen it slid up
+        // from. Matches how NowPlayingScreen itself is pushed (see
+        // mini_player.dart) for the same reason.
+        opaque: false,
+        barrierColor: Colors.transparent,
         transitionDuration: const Duration(milliseconds: 260),
-        reverseTransitionDuration: const Duration(milliseconds: 120),
+        reverseTransitionDuration: const Duration(milliseconds: 220),
         pageBuilder: (_, __, ___) => ArtistTracksScreen(artist: artist),
         transitionsBuilder: (_, animation, __, child) {
-          final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutExpo,
+            reverseCurve: Curves.easeInExpo,
+          );
+          final slide = Tween<Offset>(
+            begin: const Offset(0, 1),
+            end: Offset.zero,
+          ).animate(curved);
+          final blurSigma = Tween<double>(begin: 16, end: 0).animate(curved);
+
           return SlideTransition(
-            position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(curved),
-            child: child,
+            position: slide,
+            child: AnimatedBuilder(
+              animation: blurSigma,
+              builder: (context, blurredChild) => ImageFiltered(
+                imageFilter: ImageFilter.blur(
+                  sigmaX: blurSigma.value,
+                  sigmaY: blurSigma.value,
+                  tileMode: TileMode.decal,
+                ),
+                child: blurredChild,
+              ),
+              child: child,
+            ),
           );
         },
       ),

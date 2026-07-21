@@ -1,3 +1,5 @@
+import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../models/track.dart';
 import '../models/playlist.dart';
@@ -20,11 +22,21 @@ class LibraryProvider extends ChangeNotifier {
   /// The 4 developer-picked hashtags shown on Home, in slot order — the
   /// same for every account. `''` marks an unset slot.
   List<String> _featuredTags = List<String>.filled(4, '');
+  /// Developer-set circular avatar URLs, keyed by exact artist name. See
+  /// [avatarForArtist] for the fallback used when an artist has none.
+  Map<String, String> _artistAvatars = {};
 
   List<Track> _searchResults = [];
   bool _searching = false;
   bool _loading = false;
   List<String> _searchHistory = [];
+
+  // Recommendations cache: recomputing on every rebuild would reshuffle
+  // the list (it's randomized) even when nothing actually changed, so we
+  // only recompute when the seed (the last 5 played track ids, in order)
+  // is different from the last computation, or the catalog was reloaded.
+  List<Track>? _cachedRecommendations;
+  List<String> _cachedRecommendationsSeed = const [];
 
   List<Track> get tracks => _tracks;
   List<Playlist> get playlists => _playlists;
@@ -35,6 +47,8 @@ class LibraryProvider extends ChangeNotifier {
   List<String> get searchHistory => _searchHistory;
   /// Always length 4; `''` for any slot the developers haven't set yet.
   List<String> get featuredTags => _featuredTags;
+  /// Developer-set artist avatar URLs, keyed by exact artist name.
+  Map<String, String> get artistAvatars => _artistAvatars;
 
   List<Track> get favoriteTracks {
     final map = {for (final t in _tracks) t.id: t};
@@ -62,6 +76,91 @@ class LibraryProvider extends ChangeNotifier {
   /// [tracks] and every other track list in the app).
   List<Track> tracksForTag(String tag) => _tracks.where((t) => t.hashtags.contains(tag)).toList();
 
+  /// Circular-avatar image URL to show for [artist]: the developer-set
+  /// avatar if one has been set, otherwise the cover art of that
+  /// artist's most recently uploaded track — [_tracks] is already
+  /// newest-first, so the first match wins (same fallback rule
+  /// [ArtistTracksScreen] already used for its own header background).
+  /// Returns `''` if the artist has no custom avatar and no tracks
+  /// (e.g. their last track was deleted after the avatar was cleared).
+  String avatarForArtist(String artist) {
+    final custom = _artistAvatars[artist];
+    if (custom != null && custom.isNotEmpty) return custom;
+    for (final t in _tracks) {
+      if (t.artist == artist) return t.coverUrl;
+    }
+    return '';
+  }
+
+  /// Whether [artist] has a developer-set avatar (as opposed to falling
+  /// back to a track cover) — drives whether "remove avatar" is shown.
+  bool hasCustomArtistAvatar(String artist) => (_artistAvatars[artist] ?? '').isNotEmpty;
+
+  /// Distinct artist names in the catalog whose name contains [query]
+  /// (case-insensitive), newest-track-first. Used to show the small
+  /// "artists" block above track results on the Search screen. Returns
+  /// nothing for hashtag searches (a leading '#'), since those already
+  /// have their own dedicated matching behavior in [search].
+  List<String> searchArtists(String query) {
+    final term = query.trim().toLowerCase();
+    if (term.isEmpty || term.startsWith('#')) return [];
+    final seen = <String>{};
+    final result = <String>[];
+    for (final t in _tracks) {
+      if (seen.contains(t.artist)) continue;
+      if (t.artist.toLowerCase().contains(term)) {
+        seen.add(t.artist);
+        result.add(t.artist);
+      }
+    }
+    return result;
+  }
+
+  /// Recommendations tab (requirement: home + recommendations swipe
+  /// widget). Built from the last 5 tracks played on this device (from
+  /// the on-device cache, newest first — [_recentlyPlayedIds]): for each
+  /// of those tracks' hashtags (up to 4 each), 2 random tracks carrying
+  /// that hashtag are pulled from the full catalog. A track already
+  /// picked earlier in this pass is never picked again, even if it
+  /// matches another hashtag, and the 5 seed tracks themselves are never
+  /// recommended back. Max size is 5 * 4 * 2 = 40.
+  ///
+  /// The selection is randomized, so it's cached against the seed (the
+  /// ordered list of the last 5 played ids) and only recomputed when
+  /// that seed changes or the catalog is reloaded — otherwise every
+  /// rebuild (e.g. a player tick) would reshuffle the list under the
+  /// user's thumb.
+  List<Track> get recommendedTracks {
+    final seedIds = _recentlyPlayedIds.take(5).toList();
+    if (_cachedRecommendations != null && listEquals(_cachedRecommendationsSeed, seedIds)) {
+      return _cachedRecommendations!;
+    }
+
+    final trackMap = {for (final t in _tracks) t.id: t};
+    final seeds = seedIds.map((id) => trackMap[id]).whereType<Track>().toList();
+    final excluded = seedIds.toSet(); // never recommend a just-played track back
+    final random = Random();
+    final result = <Track>[];
+
+    for (final seed in seeds) {
+      for (final tag in seed.hashtags.take(Track.maxHashtags)) {
+        if (tag.isEmpty) continue;
+        final candidates = _tracks
+            .where((t) => t.hashtags.contains(tag) && !excluded.contains(t.id))
+            .toList()
+          ..shuffle(random);
+        for (final pick in candidates.take(2)) {
+          excluded.add(pick.id);
+          result.add(pick);
+        }
+      }
+    }
+
+    _cachedRecommendationsSeed = seedIds;
+    _cachedRecommendations = result;
+    return result;
+  }
+
   Track? trackById(String id) {
     for (final t in _tracks) {
       if (t.id == id) return t;
@@ -80,6 +179,7 @@ class LibraryProvider extends ChangeNotifier {
         CacheService.instance.getRecentlyPlayed(),
         CacheService.instance.getSearchHistory(),
         _api.fetchFeaturedTags(),
+        _api.fetchArtistAvatars(),
       ]);
       _tracks = results[0] as List<Track>;
       _playlists = results[1] as List<Playlist>;
@@ -87,6 +187,8 @@ class LibraryProvider extends ChangeNotifier {
       _recentlyPlayedIds = results[3] as List<String>;
       _searchHistory = results[4] as List<String>;
       _featuredTags = results[5] as List<String>;
+      _artistAvatars = results[6] as Map<String, String>;
+      _cachedRecommendations = null; // catalog changed — recompute next access
     } finally {
       _loading = false;
       notifyListeners();
@@ -287,6 +389,27 @@ class LibraryProvider extends ChangeNotifier {
   Future<void> setFeaturedTags(List<String> tags) async {
     final updated = await _api.setFeaturedTags(tags);
     _featuredTags = updated;
+    notifyListeners();
+  }
+
+  /// Developer-only. Uploads a new avatar image for [artist] and updates
+  /// local state so it's reflected immediately everywhere that artist's
+  /// avatar is shown (Search results block, their tracks screen).
+  /// Throws [ApiException] if the backend rejects it (non-developer
+  /// account, over the 5 MB limit, etc.) — callers should surface that
+  /// message to the user.
+  Future<void> uploadArtistAvatar({required String artist, required String localImagePath}) async {
+    final url = await _api.uploadArtistAvatar(artist: artist, localImagePath: localImagePath);
+    _artistAvatars = {..._artistAvatars, artist: url};
+    notifyListeners();
+  }
+
+  /// Developer-only. Clears [artist]'s custom avatar, reverting the UI
+  /// to falling back on their most recent track cover again (see
+  /// [avatarForArtist]).
+  Future<void> removeArtistAvatar(String artist) async {
+    await _api.removeArtistAvatar(artist);
+    _artistAvatars = {..._artistAvatars}..remove(artist);
     notifyListeners();
   }
 }
