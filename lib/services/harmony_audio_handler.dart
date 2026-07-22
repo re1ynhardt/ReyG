@@ -143,7 +143,18 @@ class HarmonyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> skipToNext() async {
-    if (player.hasNext) await player.seekToNext();
+    // NOTE: intentionally not using player.hasNext / player.seekToNext()
+    // here — just_audio's implementation of those takes loopMode into
+    // account, so with LoopMode.one ("repeat one") it just restarts the
+    // current track instead of advancing. The next/previous buttons
+    // should always move through the queue regardless of repeat mode,
+    // so we compute the target index ourselves and seek to it directly.
+    final current = player.currentIndex;
+    if (current == null) return;
+    final length = player.sequence?.length ?? 0;
+    if (current + 1 < length) {
+      await player.seek(Duration.zero, index: current + 1);
+    }
   }
 
   @override
@@ -154,7 +165,16 @@ class HarmonyAudioHandler extends BaseAudioHandler with SeekHandler {
       await player.seek(Duration.zero);
       return;
     }
-    if (player.hasPrevious) await player.seekToPrevious();
+    // See note in skipToNext: avoid player.hasPrevious / seekToPrevious()
+    // since they're affected by LoopMode.one and won't move off the
+    // current track.
+    final current = player.currentIndex;
+    if (current == null) return;
+    if (current > 0) {
+      await player.seek(Duration.zero, index: current - 1);
+    } else {
+      await player.seek(Duration.zero);
+    }
   }
 
   @override
