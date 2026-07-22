@@ -930,6 +930,23 @@ class YandexStorageApiService implements ApiService {
     return _playlistFromRow(row);
   }
 
+  /// Renames a playlist owned by the current user. Trims [newName] and
+  /// rejects it if empty, same validation the create-playlist flow
+  /// already applies client-side — kept here too as a safety net since
+  /// this writes straight to storage.
+  @override
+  Future<Playlist> renamePlaylist({required String playlistId, required String newName}) async {
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) throw ApiException('Playlist name cannot be empty');
+    final user = await _currentUserRow();
+    final row = await _withCollection(_playlistsKey, (data) {
+      final row = _findOwnedPlaylist(data, playlistId, user['id'] as String);
+      row['name'] = trimmed;
+      return row;
+    });
+    return _playlistFromRow(row);
+  }
+
   Map<String, dynamic> _findOwnedPlaylist(Map<String, dynamic> data, String playlistId, String ownerId) {
     final items = data['items'] as List<dynamic>;
     final row = items.cast<Map<String, dynamic>?>().firstWhere(

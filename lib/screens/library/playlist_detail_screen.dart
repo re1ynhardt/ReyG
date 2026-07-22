@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
@@ -33,6 +34,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   // Covers both an upload and a removal in flight — either way the thumb
   // shows a spinner and both buttons are disabled until it settles.
   bool _coverBusy = false;
+
+  // True while a rename request is in flight, so the edit affordance
+  // can't be triggered twice at once.
+  bool _renameBusy = false;
 
   /// Same lookup as `context.tr()`, but reads the locale without
   /// subscribing to changes — safe to call from inside async event
@@ -91,6 +96,160 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
     } finally {
       if (mounted) setState(() => _coverBusy = false);
+    }
+  }
+
+  /// Same frosted-glass dialog style used for the password/bio editors
+  /// elsewhere in the app (see settings_screen.dart): a translucent,
+  /// blurred surface over the rest of the screen with a soft gradient
+  /// card on top, so it reads as premium rather than a stock dialog.
+  Future<void> _renamePlaylist(String currentName) async {
+    if (_renameBusy) return;
+    final formKey = GlobalKey<FormState>();
+    final controller = TextEditingController(text: currentName);
+
+    final newName = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        final outline = OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+        );
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      dTheme.colorScheme.surface.withOpacity(0.72),
+                      dTheme.colorScheme.surface.withOpacity(0.5),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                ),
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: dTheme.colorScheme.secondary.withOpacity(0.14),
+                        ),
+                        child: Icon(Icons.edit_outlined, color: dTheme.colorScheme.secondary, size: 22),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        dialogContext.tr('rename_playlist'),
+                        textAlign: TextAlign.center,
+                        style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 22),
+                      TextFormField(
+                        controller: controller,
+                        autofocus: true,
+                        textCapitalization: TextCapitalization.sentences,
+                        style: dTheme.textTheme.bodyMedium,
+                        decoration: InputDecoration(
+                          labelText: dialogContext.tr('playlist_name'),
+                          isDense: true,
+                          filled: true,
+                          fillColor: dTheme.colorScheme.primary.withOpacity(0.05),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          border: outline,
+                          enabledBorder: outline,
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.secondary, width: 1.4),
+                          ),
+                          errorBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
+                          ),
+                        ),
+                        validator: (v) =>
+                            (v == null || v.trim().isEmpty) ? dialogContext.tr('playlist_name_required') : null,
+                        onFieldSubmitted: (_) {
+                          if (formKey.currentState!.validate()) {
+                            Navigator.of(dialogContext).pop(controller.text.trim());
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              style: TextButton.styleFrom(
+                                foregroundColor: dTheme.colorScheme.primary.withOpacity(0.7),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                              onPressed: () => Navigator.of(dialogContext).pop(),
+                              child: Text(dialogContext.tr('cancel')),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: dTheme.colorScheme.secondary,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                              onPressed: () {
+                                if (formKey.currentState!.validate()) {
+                                  Navigator.of(dialogContext).pop(controller.text.trim());
+                                }
+                              },
+                              child: Text(dialogContext.tr('save')),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (newName == null || newName == currentName || !mounted) return;
+
+    setState(() => _renameBusy = true);
+    try {
+      await context.read<LibraryProvider>().renamePlaylist(playlistId: widget.playlistId, newName: newName);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_trStatic(context, 'playlist_renamed'))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _renameBusy = false);
     }
   }
 
@@ -166,7 +325,28 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(playlist.name),
+        title: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: _renameBusy ? null : () => _renamePlaylist(playlist.name),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(child: Text(playlist.name, overflow: TextOverflow.ellipsis)),
+                const SizedBox(width: 6),
+                if (_renameBusy)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Icon(Icons.edit_outlined, size: 16, color: Theme.of(context).hintColor),
+              ],
+            ),
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline),
@@ -189,6 +369,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             subtitle: Wrap(
               spacing: 4,
               children: [
+                TextButton.icon(
+                  onPressed: _renameBusy ? null : () => _renamePlaylist(playlist.name),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: Text(context.tr('rename_playlist')),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+                ),
                 TextButton.icon(
                   onPressed: _coverBusy ? null : _pickAndUploadCover,
                   icon: const Icon(Icons.photo_camera_outlined, size: 16),

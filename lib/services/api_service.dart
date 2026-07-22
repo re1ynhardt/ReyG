@@ -65,6 +65,12 @@ abstract class ApiService {
   // --- Playlists --------------------------------------------------------
   Future<List<Playlist>> fetchPlaylists();
   Future<Playlist> createPlaylist(String name);
+
+  /// Renames a playlist owned by the current user and returns the
+  /// updated [Playlist]. Implementations should reject an empty
+  /// [newName] and enforce ownership the same way [deletePlaylist] does.
+  Future<Playlist> renamePlaylist({required String playlistId, required String newName});
+
   Future<void> addTrackToPlaylist({required String playlistId, required String trackId});
   Future<void> removeTrackFromPlaylist({required String playlistId, required String trackId});
   Future<void> deletePlaylist(String playlistId);

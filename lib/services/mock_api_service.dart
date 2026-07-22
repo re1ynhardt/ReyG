@@ -288,6 +288,18 @@ class MockApiService implements ApiService {
   }
 
   @override
+  Future<Playlist> renamePlaylist({required String playlistId, required String newName}) async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) throw ApiException('Playlist name cannot be empty');
+    final idx = _playlists.indexWhere((p) => p.id == playlistId);
+    if (idx == -1) throw ApiException('Playlist not found');
+    final updated = _playlists[idx].copyWith(name: trimmed);
+    _playlists[idx] = updated;
+    return updated;
+  }
+
+  @override
   Future<void> addTrackToPlaylist({required String playlistId, required String trackId}) async {
     await Future.delayed(const Duration(milliseconds: 200));
     final idx = _playlists.indexWhere((p) => p.id == playlistId);

@@ -261,6 +261,19 @@ class LibraryProvider extends ChangeNotifier {
     return playlist;
   }
 
+  /// Renames [playlistId] and updates local state so the new name is
+  /// reflected immediately everywhere the playlist is shown. Throws
+  /// [ApiException] if the backend rejects it (empty name, not the
+  /// caller's playlist) — callers should surface that message to the user.
+  Future<void> renamePlaylist({required String playlistId, required String newName}) async {
+    final updated = await _api.renamePlaylist(playlistId: playlistId, newName: newName);
+    final idx = _playlists.indexWhere((p) => p.id == playlistId);
+    if (idx != -1) {
+      _playlists[idx] = updated;
+      notifyListeners();
+    }
+  }
+
   Future<void> addToPlaylist(String playlistId, String trackId) async {
     await _api.addTrackToPlaylist(playlistId: playlistId, trackId: trackId);
     final idx = _playlists.indexWhere((p) => p.id == playlistId);

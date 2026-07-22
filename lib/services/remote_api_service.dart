@@ -186,6 +186,14 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<Playlist> renamePlaylist({required String playlistId, required String newName}) async {
+    final res = await http.patch(_u('/playlists/$playlistId'),
+        headers: _headers, body: jsonEncode({'name': newName}));
+    _throwIfError(res);
+    return Playlist.fromJson(jsonDecode(res.body));
+  }
+
+  @override
   Future<void> addTrackToPlaylist({required String playlistId, required String trackId}) async {
     final res = await http.post(_u('/playlists/$playlistId/tracks'),
         headers: _headers, body: jsonEncode({'track_id': trackId}));
