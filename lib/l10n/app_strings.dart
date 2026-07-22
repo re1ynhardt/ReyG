@@ -164,6 +164,10 @@ class AppStrings {
       'bio_title': 'Profile description',
       'bio_hint': 'Tell others about yourself',
       'bio_updated': 'Description updated',
+      'change_nickname': 'Change nickname',
+      'nickname_hint': 'Enter a nickname',
+      'nickname_required': 'Nickname is required',
+      'nickname_updated': 'Nickname updated',
       'bio_too_long': 'Description must be 150 characters or fewer',
     },
     ru: {
@@ -325,6 +329,10 @@ class AppStrings {
       'bio_title': 'Описание профиля',
       'bio_hint': 'Расскажите о себе',
       'bio_updated': 'Описание обновлено',
+      'change_nickname': 'Сменить никнейм',
+      'nickname_hint': 'Введите никнейм',
+      'nickname_required': 'Введите никнейм',
+      'nickname_updated': 'Никнейм изменён',
       'bio_too_long': 'Описание должно быть не длиннее 150 символов',
     },
   };

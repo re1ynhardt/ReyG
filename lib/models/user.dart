@@ -21,6 +21,11 @@ class AppUser {
   /// [ApiService.setBio] — anything longer is rejected.
   static const bioMaxLength = 150;
 
+  /// Enforced by Settings' nickname editor and by backends that accept
+  /// [ApiService.setDisplayName] — anything longer (or empty, after
+  /// trimming) is rejected.
+  static const displayNameMaxLength = 30;
+
   final String id;
   final String email;
   final String displayName;
@@ -74,10 +79,16 @@ class AppUser {
         'bio': bio,
       };
 
-  AppUser copyWith({String? avatarUrl, String? likesPrivacy, String? bio}) => AppUser(
+  AppUser copyWith({
+    String? displayName,
+    String? avatarUrl,
+    String? likesPrivacy,
+    String? bio,
+  }) =>
+      AppUser(
         id: id,
         email: email,
-        displayName: displayName,
+        displayName: displayName ?? this.displayName,
         isDeveloper: isDeveloper,
         token: token,
         avatarUrl: avatarUrl ?? this.avatarUrl,

@@ -522,6 +522,23 @@ class MockApiService implements ApiService {
   }
 
   @override
+  Future<AppUser> setDisplayName(String displayName) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    final trimmed = displayName.trim();
+    if (trimmed.isEmpty) {
+      throw ApiException('Nickname is required');
+    }
+    if (trimmed.length > AppUser.displayNameMaxLength) {
+      throw ApiException('Nickname must be ${AppUser.displayNameMaxLength} characters or fewer');
+    }
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final updated = current.copyWith(displayName: trimmed);
+    _currentMockUser = updated;
+    return updated;
+  }
+
+  @override
   Future<List<String>> fetchFeaturedTags() async {
     await Future.delayed(const Duration(milliseconds: 150));
     return List.unmodifiable(_featuredTags);

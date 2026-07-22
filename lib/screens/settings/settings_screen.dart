@@ -26,6 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _updatingPrivacy = false;
   bool _updatingPassword = false;
   bool _updatingBio = false;
+  bool _updatingDisplayName = false;
 
   InputDecoration _passwordFieldDecoration(
     ThemeData theme, {
@@ -347,6 +348,147 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Lets the user change their display name (nickname), shown
+  /// throughout the app and on their Community profile. Same
+  /// frosted-glass dialog style as [_editBio] / [_changePassword].
+  Future<void> _editDisplayName() async {
+    if (_updatingDisplayName) return;
+    final controller = TextEditingController(text: context.read<AuthProvider>().user?.displayName ?? '');
+    final formKey = GlobalKey<FormState>();
+
+    final newName = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      dTheme.colorScheme.surface.withOpacity(0.72),
+                      dTheme.colorScheme.surface.withOpacity(0.5),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                ),
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: dTheme.colorScheme.secondary.withOpacity(0.14),
+                        ),
+                        child: Icon(Icons.badge_outlined, color: dTheme.colorScheme.secondary, size: 22),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        dialogContext.tr('change_nickname'),
+                        textAlign: TextAlign.center,
+                        style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 22),
+                      TextFormField(
+                        controller: controller,
+                        autofocus: true,
+                        maxLength: AppUser.displayNameMaxLength,
+                        style: dTheme.textTheme.bodyMedium,
+                        validator: (v) =>
+                            (v == null || v.trim().isEmpty) ? dialogContext.tr('nickname_required') : null,
+                        decoration: InputDecoration(
+                          hintText: dialogContext.tr('nickname_hint'),
+                          filled: true,
+                          fillColor: dTheme.colorScheme.primary.withOpacity(0.05),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.secondary, width: 1.4),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              style: TextButton.styleFrom(
+                                foregroundColor: dTheme.colorScheme.primary.withOpacity(0.7),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                              onPressed: () => Navigator.of(dialogContext).pop(),
+                              child: Text(dialogContext.tr('cancel')),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: dTheme.colorScheme.secondary,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                              onPressed: () {
+                                if (formKey.currentState?.validate() ?? false) {
+                                  Navigator.of(dialogContext).pop(controller.text.trim());
+                                }
+                              },
+                              child: Text(dialogContext.tr('save')),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (newName == null || !mounted) return;
+
+    setState(() => _updatingDisplayName = true);
+    try {
+      await context.read<AuthProvider>().setDisplayName(newName);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _updatingDisplayName = false);
+    }
+  }
+
   Future<void> _confirmLogout() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -586,6 +728,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
               ),
             ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.badge_outlined),
+            title: Text(context.tr('change_nickname')),
+            subtitle: Text(
+              auth.user?.displayName ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: _updatingDisplayName ? null : _editDisplayName,
+            trailing: _updatingDisplayName
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.chevron_right),
           ),
           ListTile(
             leading: const Icon(Icons.lock_outline),

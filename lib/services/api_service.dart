@@ -165,6 +165,12 @@ abstract class ApiService {
   /// is longer than [AppUser.bioMaxLength]. Pass `''` to clear it.
   Future<AppUser> setBio(String bio);
 
+  /// Changes the current user's display name (nickname), shown
+  /// throughout the app and on their Community profile. Throws
+  /// [ApiException] if [displayName] is empty (after trimming) or
+  /// longer than [AppUser.displayNameMaxLength].
+  Future<AppUser> setDisplayName(String displayName);
+
   // --- Featured tags (Home screen) ----------------------------------------
   /// The 4 hashtags currently pinned to the Home screen, in display order.
   /// Same list for every account — always length 4, with `''` marking an

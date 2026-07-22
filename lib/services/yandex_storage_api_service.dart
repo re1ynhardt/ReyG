@@ -655,6 +655,31 @@ class YandexStorageApiService implements ApiService {
     return _userFromRow(row);
   }
 
+  /// Changes the current user's display name (nickname). Shown
+  /// throughout the app and on the Community tab/profile.
+  @override
+  Future<AppUser> setDisplayName(String displayName) async {
+    final trimmed = displayName.trim();
+    if (trimmed.isEmpty) {
+      throw ApiException('Nickname is required');
+    }
+    if (trimmed.length > AppUser.displayNameMaxLength) {
+      throw ApiException('Nickname must be ${AppUser.displayNameMaxLength} characters or fewer');
+    }
+    final user = await _currentUserRow();
+    final row = await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == user['id'],
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Unauthorized — no account matches this session');
+      match['display_name'] = trimmed;
+      return match;
+    });
+    return _userFromRow(row);
+  }
+
   /// Tracks [userId] has liked (favorited), newest-liked first — same
   /// ordering [LibraryProvider] applies to the current account's own
   /// [fetchFavoriteIds] (the backend appends favorites oldest → newest,

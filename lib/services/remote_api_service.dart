@@ -41,6 +41,7 @@ import 'api_service.dart';
 ///   PUT    /account/privacy     {privacy: "all"|"favorites"|"none"} -> user json
 ///   GET    /community/users/{id}/can_view                  -> {can_view: bool}
 ///   PUT    /account/password    {password: string}          -> 204 (no old password required)
+///   PUT    /account/display_name {display_name: string}     -> user json
 ///   GET    /tracks/{id}/lyrics                          -> {lyrics: string} or 404 if none
 ///   PUT    /tracks/{id}/lyrics  {lyrics: string}        -> track json (developer-only)
 ///   POST   /tracks/{id}/hashtags {hashtag: string}      -> track json
@@ -343,6 +344,17 @@ class RemoteApiService implements ApiService {
       _u('/account/bio'),
       headers: _headers,
       body: jsonEncode({'bio': bio}),
+    );
+    _throwIfError(res);
+    return AppUser.fromJson(jsonDecode(res.body));
+  }
+
+  @override
+  Future<AppUser> setDisplayName(String displayName) async {
+    final res = await http.put(
+      _u('/account/display_name'),
+      headers: _headers,
+      body: jsonEncode({'display_name': displayName}),
     );
     _throwIfError(res);
     return AppUser.fromJson(jsonDecode(res.body));

@@ -127,6 +127,21 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Changes the current user's display name (nickname) and persists it
+  /// locally. Throws [ApiException] if the new name is empty (after
+  /// trimming) or longer than [AppUser.displayNameMaxLength].
+  Future<void> setDisplayName(String displayName) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      final updated = await _api.setDisplayName(displayName);
+      await _persist(updated);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
   /// Changes the current user's password. No old password is required —
   /// the request rides on the already-authenticated session. Throws
   /// [ApiException] on failure (e.g. empty password).
