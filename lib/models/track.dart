@@ -35,6 +35,12 @@ class Track {
   /// user can add one (max 4 per track, 10 chars each); only
   /// admin/developer accounts can remove one.
   final List<String> hashtags;
+  /// Account id of whoever uploaded this track (set server-side from the
+  /// signed-in user at upload time), or '' for tracks that predate this
+  /// field. Used to show "tracks uploaded by this user" on their profile
+  /// — distinct from [artist], which is just free-text the uploader typed
+  /// and may not match their account at all.
+  final String uploaderId;
 
   const Track({
     required this.id,
@@ -47,6 +53,7 @@ class Track {
     this.uploadedLocally = false,
     this.lyricsUrl = '',
     this.hashtags = const [],
+    this.uploaderId = '',
   });
 
   bool get hasLyrics => lyricsUrl.isNotEmpty;
@@ -62,6 +69,7 @@ class Track {
         uploadedLocally: json['uploaded_locally'] as bool? ?? false,
         lyricsUrl: json['lyrics_url'] as String? ?? '',
         hashtags: (json['hashtags'] as List<dynamic>?)?.map((e) => e as String).toList() ?? const [],
+        uploaderId: json['uploader_id'] as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -75,6 +83,7 @@ class Track {
         'uploaded_locally': uploadedLocally,
         'lyrics_url': lyricsUrl,
         'hashtags': hashtags,
+        'uploader_id': uploaderId,
       };
 
   Track copyWith({String? lyricsUrl, List<String>? hashtags}) => Track(
@@ -87,6 +96,7 @@ class Track {
         duration: duration,
         uploadedLocally: uploadedLocally,
         lyricsUrl: lyricsUrl ?? this.lyricsUrl,
+        uploaderId: uploaderId,
         hashtags: hashtags ?? this.hashtags,
       );
 }

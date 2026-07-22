@@ -15,6 +15,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _name = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  bool _agreedToDistributionTerms = false;
 
   @override
   void dispose() {
@@ -26,6 +27,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (!_agreedToDistributionTerms) return;
     final auth = context.read<AuthProvider>();
     final ok = await auth.register(_email.text.trim(), _password.text, _name.text.trim());
     if (ok && mounted) {
@@ -66,9 +68,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   decoration: InputDecoration(labelText: context.tr('password')),
                   validator: (v) => (v == null || v.length < 6) ? context.tr('password') : null,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        context.tr('distribution_agreement_text'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => setState(() => _agreedToDistributionTerms = !_agreedToDistributionTerms),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Row(
+                          children: [
+                            Checkbox(
+                              value: _agreedToDistributionTerms,
+                              onChanged: (v) => setState(() => _agreedToDistributionTerms = v ?? false),
+                            ),
+                            Expanded(
+                              child: Text(
+                                context.tr('agree_to_terms'),
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
                 ElevatedButton(
-                  onPressed: auth.busy ? null : _submit,
+                  onPressed: (auth.busy || !_agreedToDistributionTerms) ? null : _submit,
                   style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
                   child: auth.busy
                       ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))

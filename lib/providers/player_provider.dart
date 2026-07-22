@@ -68,6 +68,23 @@ class PlayerProvider extends ChangeNotifier {
 
   Future<void> previous() => _service.previous();
 
+  /// Stops playback entirely and clears [currentTrack], which is what
+  /// makes the mini player disappear (it renders nothing once there's no
+  /// current track) — used when the person swipes the mini player away.
+  ///
+  /// Clears state and notifies FIRST, then awaits the actual stop —
+  /// Dismissible requires the dismissed widget to be removed from the
+  /// tree synchronously in onDismissed, so the `await` can't come before
+  /// notifyListeners() or Flutter throws "still part of the tree".
+  Future<void> stopAndDismiss() async {
+    currentTrack = null;
+    isPlaying = false;
+    position = Duration.zero;
+    duration = null;
+    notifyListeners();
+    await _service.stop();
+  }
+
   /// Cycles repeat: off -> repeat queue -> repeat current track -> off.
   Future<void> toggleRepeat() => _service.cycleLoopMode();
 

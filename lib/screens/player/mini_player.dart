@@ -2,24 +2,72 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../models/track.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/cached_cover_image.dart';
 import 'now_playing_screen.dart';
 
-class MiniPlayer extends StatelessWidget {
+class MiniPlayer extends StatefulWidget {
   const MiniPlayer({super.key});
+
+  @override
+  State<MiniPlayer> createState() => _MiniPlayerState();
+}
+
+class _MiniPlayerState extends State<MiniPlayer> {
+  /// Id of the track whose mini player we've just swiped away locally.
+  /// Flutter requires a dismissed Dismissible to be removed from the tree
+  /// synchronously inside onDismissed — relying on PlayerProvider's async
+  /// stopAndDismiss()/notifyListeners() to clear currentTrack was a frame
+  /// too late, which is exactly what threw "still part of the tree".
+  /// Tracking it locally with setState (the pattern Flutter's own docs
+  /// use for Dismissible) removes it immediately, in the same callback.
+  String? _dismissingTrackId;
 
   @override
   Widget build(BuildContext context) {
     final player = context.watch<PlayerProvider>();
     final track = player.currentTrack;
-    if (track == null) return const SizedBox.shrink();
+    if (track == null || track.id == _dismissingTrackId) return const SizedBox.shrink();
 
     final duration = player.duration ?? track.duration;
     final progress = duration.inMilliseconds == 0
         ? 0.0
         : (player.position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
 
+    return Dismissible(
+      // Keyed by track id so Flutter treats a new track as a fresh widget
+      // instead of trying to animate/reuse the just-dismissed one.
+      key: ValueKey('mini_player_${track.id}'),
+      direction: DismissDirection.horizontal,
+      onDismissed: (_) {
+        setState(() => _dismissingTrackId = track.id);
+        // Fire-and-forget: the mini player is already gone from the tree
+        // via the setState above, so this doesn't need to be awaited or
+        // ordered relative to anything UI-related.
+        player.stopAndDismiss();
+      },
+      background: _buildSwipeBackground(context, Alignment.centerLeft),
+      secondaryBackground: _buildSwipeBackground(context, Alignment.centerRight),
+      child: _buildContent(context, player, track, progress),
+    );
+  }
+
+  /// Red "stop" hint revealed behind the mini player as it's swiped away.
+  Widget _buildSwipeBackground(BuildContext context, Alignment alignment) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      alignment: alignment,
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.85),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: const Icon(Icons.stop_circle_rounded, color: Colors.white),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, PlayerProvider player, Track track, double progress) {
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
         PageRouteBuilder(

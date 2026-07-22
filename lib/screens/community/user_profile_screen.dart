@@ -29,7 +29,7 @@ class UserProfileScreen extends StatefulWidget {
   State<UserProfileScreen> createState() => _UserProfileScreenState();
 }
 
-class _UserProfileScreenState extends State<UserProfileScreen> {
+class _UserProfileScreenState extends State<UserProfileScreen> with SingleTickerProviderStateMixin {
   late Future<List<Track>> _tracksFuture;
   late Future<List<Playlist>> _playlistsFuture;
   /// Whether the signed-in account is allowed to see this user's liked
@@ -37,14 +37,25 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   /// once up front so the UI can show a "private" message instead of an
   /// empty list when it's hidden rather than just empty.
   late Future<bool> _canViewFuture;
+  /// Drives the swipe between the two profile pages: "Library" (liked
+  /// tracks + playlists, same content this screen always showed) and
+  /// "Artist" (tracks this specific account has uploaded).
+  late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     final community = context.read<CommunityProvider>();
     _canViewFuture = community.canViewUserLibrary(widget.user.id);
     _tracksFuture = community.fetchUserLikedTracks(widget.user.id);
     _playlistsFuture = community.fetchUserPlaylists(widget.user.id);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   void _reload() {
@@ -77,6 +88,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final player = context.watch<PlayerProvider>();
     final auth = context.watch<AuthProvider>();
     final community = context.watch<CommunityProvider>();
+    final library = context.watch<LibraryProvider>();
     final isDeveloper = auth.hasDeveloperRights;
     final isSelf = auth.user?.id == widget.user.id;
     final isFavorite = community.isFavoriteUser(widget.user.id);
@@ -86,6 +98,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     // profile, prefer the live AuthProvider copy so those edits show up
     // immediately without needing to reopen this screen.
     final user = isSelf ? (auth.user ?? widget.user) : widget.user;
+    // Tracks this specific account uploaded (not just tracks credited to
+    // them as "artist" — an uploader can type any artist name), shown on
+    // the "Artist" page.
+    final uploadedTracks = library.tracks.where((t) => t.uploaderId == user.id).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -110,117 +126,173 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () async => _reload(),
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 100),
-          children: [
-            if (user.bannerUrl.isNotEmpty)
-              _ProfileHeaderWithBanner(user: user)
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    ArtistAvatar(imageUrl: user.avatarUrl, radius: 36),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            user.displayName,
-                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+      body: Column(
+        children: [
+          if (user.bannerUrl.isNotEmpty)
+            _ProfileHeaderWithBanner(user: user)
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  ArtistAvatar(imageUrl: user.avatarUrl, radius: 36),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user.displayName,
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                        if (user.isDeveloper || user.isSupport || user.isPerformer) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
+                                size: 14,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                user.isDeveloper
+                                    ? context.tr('developer_account')
+                                    : user.isSupport
+                                        ? context.tr('support_account')
+                                        : context.tr('performer_account'),
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ],
                           ),
-                          if (user.isDeveloper || user.isSupport || user.isPerformer) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
-                                  size: 14,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  user.isDeveloper
-                                      ? context.tr('developer_account')
-                                      : user.isSupport
-                                          ? context.tr('support_account')
-                                          : context.tr('performer_account'),
-                                  style: const TextStyle(fontSize: 13),
-                                ),
-                              ],
-                            ),
-                          ],
                         ],
-                      ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            if (user.bio.isNotEmpty) _UserBioWidget(bio: user.bio),
-            FutureBuilder<bool>(
-              future: _canViewFuture,
-              builder: (context, canViewSnapshot) {
-                if (canViewSnapshot.connectionState != ConnectionState.done) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-                if (canViewSnapshot.data != true) {
-                  return _PrivateLibraryCard();
-                }
-                return Column(
-                  children: [
-                    FutureBuilder<List<Track>>(
-                      future: _tracksFuture,
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState != ConnectionState.done) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 24),
-                            child: Center(child: CircularProgressIndicator()),
-                          );
-                        }
-                        final tracks = snapshot.data ?? const [];
-                        return _FavoritesGlassCard(
-                          tracks: tracks,
-                          onOpen: tracks.isEmpty
-                              ? null
-                              : () => Navigator.of(context).push(MaterialPageRoute(
-                                    builder: (_) =>
-                                        _UserTracksScreen(title: context.tr('favorites'), tracks: tracks),
-                                  )),
-                        );
-                      },
-                    ),
-                    FutureBuilder<List<Playlist>>(
-                      future: _playlistsFuture,
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState != ConnectionState.done) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 24),
-                            child: Center(child: CircularProgressIndicator()),
-                          );
-                        }
-                        final playlists = snapshot.data ?? const [];
-                        return _PlaylistsGlassCard(playlists: playlists);
-                      },
-                    ),
-                  ],
-                );
-              },
             ),
-          ],
-        ),
+          if (user.bio.isNotEmpty) _UserBioWidget(bio: user.bio),
+          TabBar(
+            controller: _tabController,
+            tabs: [
+              Tab(icon: const Icon(Icons.library_music_outlined), text: context.tr('profile_tab_library')),
+              Tab(icon: const Icon(Icons.mic_none_rounded), text: context.tr('profile_tab_artist')),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildLibraryTab(context),
+                _buildArtistTab(context, uploadedTracks, player),
+              ],
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: player.hasTrack
           ? const Padding(padding: EdgeInsets.only(bottom: 6), child: MiniPlayer())
           : null,
+    );
+  }
+
+  /// "Library" page: this account's liked tracks and playlists — the
+  /// content this screen always showed, unchanged, just now living in its
+  /// own swipeable page instead of the whole screen.
+  Widget _buildLibraryTab(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: () async => _reload(),
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 100),
+        children: [
+          FutureBuilder<bool>(
+            future: _canViewFuture,
+            builder: (context, canViewSnapshot) {
+              if (canViewSnapshot.connectionState != ConnectionState.done) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (canViewSnapshot.data != true) {
+                return _PrivateLibraryCard();
+              }
+              return Column(
+                children: [
+                  FutureBuilder<List<Track>>(
+                    future: _tracksFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
+                      final tracks = snapshot.data ?? const [];
+                      return _FavoritesGlassCard(
+                        tracks: tracks,
+                        onOpen: tracks.isEmpty
+                            ? null
+                            : () => Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (_) =>
+                                      _UserTracksScreen(title: context.tr('favorites'), tracks: tracks),
+                                )),
+                      );
+                    },
+                  ),
+                  FutureBuilder<List<Playlist>>(
+                    future: _playlistsFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
+                      final playlists = snapshot.data ?? const [];
+                      return _PlaylistsGlassCard(playlists: playlists);
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "Artist" page: every track this account has personally uploaded
+  /// (matched via [Track.uploaderId], not the free-text artist name), so
+  /// it reads live from [LibraryProvider] rather than a one-shot fetch —
+  /// it updates immediately if the account uploads/deletes a track while
+  /// this profile is open.
+  Widget _buildArtistTab(BuildContext context, List<Track> tracks, PlayerProvider player) {
+    if (tracks.isEmpty) {
+      return Center(
+        child: Text(context.tr('user_no_tracks'), style: TextStyle(color: Theme.of(context).hintColor)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 100),
+      itemCount: tracks.length,
+      itemBuilder: (context, i) => TrackListTile(
+        track: tracks[i],
+        isPlaying: player.currentTrack?.id == tracks[i].id,
+        onTap: () => player.playQueue(tracks, startIndex: i),
+        trailing: IconButton(
+          icon: const Icon(Icons.more_vert),
+          onPressed: () => showModalBottomSheet(
+            context: context,
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+            builder: (_) => PlaylistPickerSheet(track: tracks[i]),
+          ),
+        ),
+      ),
     );
   }
 }
