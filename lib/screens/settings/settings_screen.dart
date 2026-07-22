@@ -10,6 +10,7 @@ import '../../models/user.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme/app_theme.dart';
+import 'banner_crop_screen.dart';
 import 'featured_tags_screen.dart';
 import 'themes_screen.dart';
 
@@ -656,9 +657,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
+    if (!mounted) return;
+    final croppedPath = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => BannerCropScreen(imagePath: picked.path!)),
+    );
+    if (croppedPath == null) return; // user backed out of the crop screen
+
     setState(() => _uploadingBanner = true);
     try {
-      await context.read<AuthProvider>().uploadBanner(picked.path!);
+      await context.read<AuthProvider>().uploadBanner(croppedPath);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(_trStatic(context, 'banner_updated'))));

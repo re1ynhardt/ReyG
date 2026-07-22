@@ -115,38 +115,42 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         child: ListView(
           padding: const EdgeInsets.only(bottom: 100),
           children: [
-            if (user.bannerUrl.isNotEmpty) _UserBannerImage(url: user.bannerUrl),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-              child: Row(
-                children: [
-                  ArtistAvatar(imageUrl: user.avatarUrl, radius: 36),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user.displayName,
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                        if (user.isDeveloper) ...[
-                          const SizedBox(height: 4),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.verified, size: 14, color: Theme.of(context).colorScheme.primary),
-                              const SizedBox(width: 4),
-                              Text(context.tr('developer_account'), style: const TextStyle(fontSize: 13)),
-                            ],
+            if (user.bannerUrl.isNotEmpty)
+              _ProfileHeaderWithBanner(user: user)
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    ArtistAvatar(imageUrl: user.avatarUrl, radius: 36),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.displayName,
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
+                          if (user.isDeveloper) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.verified, size: 14, color: Theme.of(context).colorScheme.primary),
+                                const SizedBox(width: 4),
+                                Text(context.tr('developer_account'), style: const TextStyle(fontSize: 13)),
+                              ],
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
             if (user.bio.isNotEmpty) _UserBioWidget(bio: user.bio),
             FutureBuilder<bool>(
               future: _canViewFuture,
@@ -216,10 +220,78 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 /// Short profile description shown right under the avatar/name row on a
 /// Community profile (see [AppUser.bio], set from Settings). Only
 /// rendered when the account has actually set one.
+/// Banner + avatar/name header shown when the profile has a banner set.
+/// Lays the avatar over the bottom edge of the banner (half on the image,
+/// half below it) and bottom-aligns the name with the avatar, using
+/// [Stack]/[Positioned] rather than negative margin/padding — both
+/// `Container.margin` and `Padding.padding` assert non-negative in
+/// Flutter, so an overlap like this can't be done by shifting insets
+/// into negative territory.
+class _ProfileHeaderWithBanner extends StatelessWidget {
+  const _ProfileHeaderWithBanner({required this.user});
+
+  final AppUser user;
+
+  static const _avatarRadius = 36.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Column(
+          children: [
+            _UserBannerImage(url: user.bannerUrl),
+            // Reserves room below the banner for the bottom half of the
+            // overlapping avatar (plus a little breathing room), so later
+            // widgets in the list don't start right underneath it.
+            const SizedBox(height: _avatarRadius + 12),
+          ],
+        ),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 0,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              ArtistAvatar(imageUrl: user.avatarUrl, radius: _avatarRadius),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      user.displayName,
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    if (user.isDeveloper) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.verified, size: 14, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 4),
+                          Text(context.tr('developer_account'), style: const TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Wide banner image shown at the top of a profile, above the avatar
-/// row. Only rendered when the user has a `bannerUrl` set — there's no
-/// upload UI for it yet, so this only ever shows a banner that was set
-/// some other way (e.g. directly in storage).
+/// row. Only rendered when the user has a `bannerUrl` set. Fades into
+/// the scaffold background at the bottom edge, right under the name
+/// row (see [_UserBannerImage]).
 class _UserBannerImage extends StatelessWidget {
   const _UserBannerImage({required this.url});
 
@@ -227,13 +299,34 @@ class _UserBannerImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bg = Theme.of(context).scaffoldBackgroundColor;
     return AspectRatio(
       aspectRatio: 3,
-      child: CachedNetworkImage(
-        imageUrl: url,
-        fit: BoxFit.cover,
-        errorWidget: (context, _, __) => Container(color: Theme.of(context).cardColor),
-        placeholder: (context, _) => Container(color: Theme.of(context).cardColor),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CachedNetworkImage(
+            imageUrl: url,
+            fit: BoxFit.cover,
+            errorWidget: (context, _, __) => Container(color: Theme.of(context).cardColor),
+            placeholder: (context, _) => Container(color: Theme.of(context).cardColor),
+          ),
+          // Fades the bottom of the banner into the scaffold background so
+          // it blends smoothly into the avatar/name row right below it,
+          // instead of ending in a hard edge.
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  stops: const [0.0, 0.6],
+                  colors: [bg, bg.withOpacity(0)],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -252,7 +345,7 @@ class _UserBioWidget extends StatelessWidget {
     // "voice" of the profile rather than another data card in the list.
     final accent = theme.colorScheme.secondary;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
       child: Container(
         width: double.infinity,
         clipBehavior: Clip.antiAlias,
