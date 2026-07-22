@@ -45,6 +45,8 @@ class YandexStorageConfig {
     this.endpointHost = 'storage.yandexcloud.net',
     this.region = 'ru-central1',
     this.developerEmails = const {'dev@example.com'},
+    this.performerEmails = const {},
+    this.supportEmails = const {},
   });
 
   final String accessKeyId;
@@ -55,6 +57,17 @@ class YandexStorageConfig {
 
   /// Emails that get the developer flag (upload rights) at registration.
   final Set<String> developerEmails;
+
+  /// Emails that get the "исполнитель" (performer/artist) role at
+  /// registration — same track-management rights as developers (upload
+  /// tracks, delete tracks, delete hashtags) without the rest of the
+  /// developer-only surface. Set this in lib/main.dart.
+  final Set<String> performerEmails;
+
+  /// Emails that get the "поддержка" (support) role at registration —
+  /// exactly the same rights as developer accounts (see [developerEmails]).
+  /// Set this in lib/main.dart.
+  final Set<String> supportEmails;
 
   Uri get baseUri => Uri.https(endpointHost, '');
 }
@@ -228,6 +241,8 @@ class YandexStorageApiService implements ApiService {
         'password_hash': _hashPassword(password),
         'display_name': displayName.trim().isEmpty ? normalizedEmail.split('@').first : displayName.trim(),
         'is_developer': config.developerEmails.contains(normalizedEmail),
+        'is_performer': config.performerEmails.contains(normalizedEmail),
+        'is_support': config.supportEmails.contains(normalizedEmail),
         'token': _randomId(),
         'avatar_url': '',
         'banner_url': '',
@@ -266,6 +281,8 @@ class YandexStorageApiService implements ApiService {
         email: row['email'] as String,
         displayName: row['display_name'] as String,
         isDeveloper: row['is_developer'] as bool? ?? false,
+        isPerformer: row['is_performer'] as bool? ?? false,
+        isSupport: row['is_support'] as bool? ?? false,
         token: row['token'] as String,
         avatarUrl: row['avatar_url'] as String? ?? '',
         bannerUrl: row['banner_url'] as String? ?? '',
@@ -343,8 +360,8 @@ class YandexStorageApiService implements ApiService {
     String? localCoverPath,
   }) async {
     final user = await _currentUserRow();
-    if (user['is_developer'] != true) {
-      throw ApiException('Only developer accounts can upload tracks');
+    if (user['is_developer'] != true && user['is_performer'] != true && user['is_support'] != true) {
+      throw ApiException('Only developer, support, or performer accounts can upload tracks');
     }
 
     final audioUrl = await _uploadMediaFile(localAudioPath, _audioPrefix);
@@ -386,15 +403,15 @@ class YandexStorageApiService implements ApiService {
     return utf8.decode(res.bodyBytes);
   }
 
-  /// Developer-only. Uploads the lyrics text to a deterministic
-  /// per-track key (so editing existing lyrics overwrites the same
-  /// object instead of leaving old copies behind) and records the
-  /// resulting URL on the track's row.
+  /// Developer, support, or performer accounts only. Uploads the lyrics
+  /// text to a deterministic per-track key (so editing existing lyrics
+  /// overwrites the same object instead of leaving old copies behind)
+  /// and records the resulting URL on the track's row.
   @override
   Future<Track> setLyrics({required String trackId, required String lyrics}) async {
     final user = await _currentUserRow();
-    if (user['is_developer'] != true) {
-      throw ApiException('Only developer accounts can add lyrics');
+    if (user['is_developer'] != true && user['is_support'] != true && user['is_performer'] != true) {
+      throw ApiException('Only developer, support, or performer accounts can add lyrics');
     }
 
     final key = '$_lyricsPrefix$trackId.txt';
@@ -452,8 +469,8 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<Track> removeHashtag({required String trackId, required String hashtag}) async {
     final user = await _currentUserRow();
-    if (user['is_developer'] != true) {
-      throw ApiException('Only admin accounts can remove hashtags');
+    if (user['is_developer'] != true && user['is_performer'] != true && user['is_support'] != true) {
+      throw ApiException('Only developer, support, or performer accounts can remove hashtags');
     }
     final tag = hashtag.trim().toLowerCase();
 
@@ -569,6 +586,8 @@ class YandexStorageApiService implements ApiService {
               email: r['email'] as String,
               displayName: r['display_name'] as String,
               isDeveloper: r['is_developer'] as bool? ?? false,
+              isPerformer: r['is_performer'] as bool? ?? false,
+              isSupport: r['is_support'] as bool? ?? false,
               token: '',
               avatarUrl: r['avatar_url'] as String? ?? '',
               bannerUrl: r['banner_url'] as String? ?? '',
@@ -586,6 +605,7 @@ class YandexStorageApiService implements ApiService {
   Future<bool> _checkCanViewLibrary(Map<String, dynamic> viewer, String userId) async {
     if (viewer['id'] == userId) return true;
     if (viewer['is_developer'] == true) return true;
+    if (viewer['is_support'] == true) return true;
     final usersData = await _readCollection(_usersKey);
     final items = (usersData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     final owner = items.cast<Map<String, dynamic>?>().firstWhere((r) => r?['id'] == userId, orElse: () => null);
@@ -644,8 +664,8 @@ class YandexStorageApiService implements ApiService {
       throw ApiException('Password is required');
     }
     final caller = await _currentUserRow();
-    if (caller['is_developer'] != true) {
-      throw ApiException('Only developer accounts can change other accounts\' passwords');
+    if (caller['is_developer'] != true && caller['is_support'] != true) {
+      throw ApiException('Only developer or support accounts can change other accounts\' passwords');
     }
     await _withCollection(_usersKey, (data) {
       final items = data['items'] as List<dynamic>;
@@ -775,8 +795,8 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<void> deleteUserAccount(String userId) async {
     final caller = await _currentUserRow();
-    if (caller['is_developer'] != true) {
-      throw ApiException('Only developer accounts can delete accounts');
+    if (caller['is_developer'] != true && caller['is_support'] != true) {
+      throw ApiException('Only developer or support accounts can delete accounts');
     }
 
     String? avatarUrl;
@@ -857,6 +877,40 @@ class YandexStorageApiService implements ApiService {
     });
   }
 
+  /// Developer-only (strictly — support accounts are rejected too, see
+  /// [ApiService.syncAccountRoles]). Walks every account row and
+  /// recomputes its `is_developer`/`is_performer`/`is_support` flags from
+  /// [config]'s email lists, overwriting whatever was stored at
+  /// registration time. This is how an account that was registered
+  /// before an email was added to (or removed from) one of those lists
+  /// picks up the change, without deleting and re-registering it.
+  @override
+  Future<int> syncAccountRoles() async {
+    final caller = await _currentUserRow();
+    if (caller['is_developer'] != true) {
+      throw ApiException('Only developer accounts can sync account roles');
+    }
+    return _withCollection(_usersKey, (data) {
+      final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+      var updated = 0;
+      for (final row in items) {
+        final email = row['email'] as String? ?? '';
+        final shouldBeDeveloper = config.developerEmails.contains(email);
+        final shouldBePerformer = config.performerEmails.contains(email);
+        final shouldBeSupport = config.supportEmails.contains(email);
+        if (row['is_developer'] != shouldBeDeveloper ||
+            row['is_performer'] != shouldBePerformer ||
+            row['is_support'] != shouldBeSupport) {
+          row['is_developer'] = shouldBeDeveloper;
+          row['is_performer'] = shouldBePerformer;
+          row['is_support'] = shouldBeSupport;
+          updated++;
+        }
+      }
+      return updated;
+    });
+  }
+
   Future<String> _uploadMediaFile(String localPath, String prefix) async {
     final bytes = await File(localPath).readAsBytes();
     final ext = localPath.contains('.') ? localPath.substring(localPath.lastIndexOf('.')) : '';
@@ -896,15 +950,15 @@ class YandexStorageApiService implements ApiService {
 
   Track _trackFromRow(Map<String, dynamic> row) => Track.fromJson(row);
 
-  /// Developer-only. Removes the track from the catalog, strips it out of
+  /// Developer/performer-only. Removes the track from the catalog, strips it out of
   /// every playlist and every user's favorites, and best-effort deletes
   /// the underlying audio/cover objects from storage so they don't sit
   /// around forever as orphaned files.
   @override
   Future<void> deleteTrack(String trackId) async {
     final user = await _currentUserRow();
-    if (user['is_developer'] != true) {
-      throw ApiException('Only developer accounts can delete tracks');
+    if (user['is_developer'] != true && user['is_performer'] != true && user['is_support'] != true) {
+      throw ApiException('Only developer, support, or performer accounts can delete tracks');
     }
 
     String? audioUrl;
@@ -1187,8 +1241,8 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<List<String>> setFeaturedTags(List<String> tags) async {
     final user = await _currentUserRow();
-    if (user['is_developer'] != true) {
-      throw ApiException('Only developer accounts can set featured tags');
+    if (user['is_developer'] != true && user['is_support'] != true) {
+      throw ApiException('Only developer or support accounts can set featured tags');
     }
     final cleaned = List<String>.generate(4, (i) => i < tags.length ? tags[i].trim().toLowerCase() : '');
     for (final tag in cleaned) {
@@ -1242,8 +1296,8 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<String> uploadArtistAvatar({required String artist, required String localImagePath}) async {
     final user = await _currentUserRow();
-    if (user['is_developer'] != true) {
-      throw ApiException('Only developer accounts can set artist avatars');
+    if (user['is_developer'] != true && user['is_support'] != true) {
+      throw ApiException('Only developer or support accounts can set artist avatars');
     }
 
     final file = File(localImagePath);
@@ -1296,8 +1350,8 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<void> removeArtistAvatar(String artist) async {
     final user = await _currentUserRow();
-    if (user['is_developer'] != true) {
-      throw ApiException('Only developer accounts can remove artist avatars');
+    if (user['is_developer'] != true && user['is_support'] != true) {
+      throw ApiException('Only developer or support accounts can remove artist avatars');
     }
 
     for (var attempt = 0; attempt < _maxRetries; attempt++) {

@@ -9,6 +9,7 @@ import '../../l10n/app_strings.dart';
 import '../../models/user.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/community_provider.dart';
 import '../../theme/app_theme.dart';
 import 'banner_crop_screen.dart';
 import 'featured_tags_screen.dart';
@@ -30,6 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _updatingPassword = false;
   bool _updatingBio = false;
   bool _updatingDisplayName = false;
+  bool _syncingRoles = false;
 
   InputDecoration _passwordFieldDecoration(
     ThemeData theme, {
@@ -615,6 +617,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return AppStrings.t(locale, key);
   }
 
+  Future<void> _syncRoles() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.tr('sync_roles_confirm_title')),
+        content: Text(context.tr('sync_roles_confirm_body')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(context.tr('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(context.tr('sync_roles')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _syncingRoles = true);
+    try {
+      final updated = await context.read<CommunityProvider>().syncAccountRoles();
+      if (!mounted) return;
+      final message = updated > 0
+          ? context.trOnce('sync_roles_success').replaceFirst('{count}', '$updated')
+          : context.trOnce('sync_roles_up_to_date');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) setState(() => _syncingRoles = false);
+    }
+  }
+
   Future<void> _pickAndUploadAvatar() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.image);
     final picked = result?.files.single;
@@ -753,7 +791,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     label: Text(context.tr('developer_account'), style: const TextStyle(fontSize: 11)),
                     avatar: const Icon(Icons.verified, size: 16),
                   )
-                : null,
+                : auth.isSupport
+                    ? Chip(
+                        label: Text(context.tr('support_account'), style: const TextStyle(fontSize: 11)),
+                        avatar: const Icon(Icons.verified, size: 16),
+                      )
+                    : auth.isPerformer
+                        ? Chip(
+                            label: Text(context.tr('performer_account'), style: const TextStyle(fontSize: 11)),
+                            avatar: const Icon(Icons.mic, size: 16),
+                          )
+                        : null,
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
@@ -895,11 +943,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ThemesScreen())),
           ),
-          if (auth.isDeveloper) ...[
+          if (auth.hasDeveloperRights) ...[
             const Divider(height: 24),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text(context.tr('developer_account'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              child: Text(
+                auth.isDeveloper ? context.tr('developer_account') : context.tr('support_account'),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
             ),
             ListTile(
               leading: Container(
@@ -915,6 +966,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: Text(context.tr('select_tags_subtitle'), style: const TextStyle(fontSize: 12)),
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FeaturedTagsScreen())),
             ),
+            // Strictly developer-only — unlike [select_tags] above, support
+            // accounts do NOT get this one (see auth.isDeveloper, not
+            // auth.hasDeveloperRights).
+            if (auth.isDeveloper)
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.secondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _syncingRoles
+                      ? const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.sync, color: Colors.white),
+                ),
+                title: Text(context.tr('sync_roles'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Text(context.tr('sync_roles_subtitle'), style: const TextStyle(fontSize: 12)),
+                onTap: _syncingRoles ? null : _syncRoles,
+              ),
           ],
           const Divider(height: 24),
           ListTile(

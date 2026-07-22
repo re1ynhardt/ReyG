@@ -43,7 +43,7 @@ import 'api_service.dart';
 ///   PUT    /account/password    {password: string}          -> 204 (no old password required)
 ///   PUT    /account/display_name {display_name: string}     -> user json
 ///   GET    /tracks/{id}/lyrics                          -> {lyrics: string} or 404 if none
-///   PUT    /tracks/{id}/lyrics  {lyrics: string}        -> track json (developer-only)
+///   PUT    /tracks/{id}/lyrics  {lyrics: string}        -> track json (developer/support/performer-only)
 ///   POST   /tracks/{id}/hashtags {hashtag: string}      -> track json
 ///   DELETE /tracks/{id}/hashtags/{hashtag}              -> track json (admin-only)
 ///   GET    /featured_tags                               -> ["tag1","tag2","tag3","tag4"]
@@ -51,6 +51,7 @@ import 'api_service.dart';
 ///   GET    /artists/avatars                              -> {"Artist Name": "url", ...}
 ///   POST   /artists/{artist}/avatar multipart(avatar)    -> {"avatar_url": "..."} (developer-only, max 5 MB, enforce server-side too)
 ///   DELETE /artists/{artist}/avatar                      -> 204 (developer-only)
+///   POST   /community/sync_roles                          -> {"updated": N} (developer-only, NOT support)
 class RemoteApiService implements ApiService {
   RemoteApiService({required this.baseUrl, this.authToken});
 
@@ -319,6 +320,13 @@ class RemoteApiService implements ApiService {
       body: jsonEncode({'favorite': favorite}),
     );
     _throwIfError(res);
+  }
+
+  @override
+  Future<int> syncAccountRoles() async {
+    final res = await http.post(_u('/community/sync_roles'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as Map<String, dynamic>)['updated'] as int? ?? 0;
   }
 
   @override

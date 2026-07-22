@@ -77,7 +77,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final player = context.watch<PlayerProvider>();
     final auth = context.watch<AuthProvider>();
     final community = context.watch<CommunityProvider>();
-    final isDeveloper = auth.isDeveloper;
+    final isDeveloper = auth.hasDeveloperRights;
     final isSelf = auth.user?.id == widget.user.id;
     final isFavorite = community.isFavoriteUser(widget.user.id);
     // widget.user is a snapshot taken when this screen was pushed (e.g.
@@ -134,14 +134,25 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             user.displayName,
                             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
-                          if (user.isDeveloper) ...[
+                          if (user.isDeveloper || user.isSupport || user.isPerformer) ...[
                             const SizedBox(height: 4),
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.verified, size: 14, color: Theme.of(context).colorScheme.primary),
+                                Icon(
+                                  (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
+                                  size: 14,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
                                 const SizedBox(width: 4),
-                                Text(context.tr('developer_account'), style: const TextStyle(fontSize: 13)),
+                                Text(
+                                  user.isDeveloper
+                                      ? context.tr('developer_account')
+                                      : user.isSupport
+                                          ? context.tr('support_account')
+                                          : context.tr('performer_account'),
+                                  style: const TextStyle(fontSize: 13),
+                                ),
                               ],
                             ),
                           ],
@@ -266,14 +277,25 @@ class _ProfileHeaderWithBanner extends StatelessWidget {
                       user.displayName,
                       style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
-                    if (user.isDeveloper) ...[
+                    if (user.isDeveloper || user.isSupport || user.isPerformer) ...[
                       const SizedBox(height: 4),
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.verified, size: 14, color: Theme.of(context).colorScheme.primary),
+                          Icon(
+                            (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
+                            size: 14,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                           const SizedBox(width: 4),
-                          Text(context.tr('developer_account'), style: const TextStyle(fontSize: 13)),
+                          Text(
+                            user.isDeveloper
+                                ? context.tr('developer_account')
+                                : user.isSupport
+                                    ? context.tr('support_account')
+                                    : context.tr('performer_account'),
+                            style: const TextStyle(fontSize: 13),
+                          ),
                         ],
                       ),
                     ],
@@ -1061,7 +1083,11 @@ class _UserDebugSheetState extends State<_UserDebugSheet> {
                     label: context.tr('account_role'),
                     value: user.isDeveloper
                         ? context.tr('account_role_developer')
-                        : context.tr('account_role_user'),
+                        : user.isSupport
+                            ? context.tr('account_role_support')
+                            : user.isPerformer
+                                ? context.tr('account_role_performer')
+                                : context.tr('account_role_user'),
                   ),
                   const SizedBox(height: 4),
                   _DebugInfoRow(label: context.tr('password'), value: '••••••••'),

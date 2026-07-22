@@ -348,9 +348,10 @@ class LibraryProvider extends ChangeNotifier {
 
   Future<String?> fetchLyrics(Track track) => _api.fetchLyrics(track);
 
-  /// Developer-only. Uploads the lyrics text and updates the track
-  /// everywhere it's currently held in memory (catalog, search results)
-  /// so the lyrics panel reflects it immediately without a full reload.
+  /// Developer, support, or performer accounts only. Uploads the lyrics
+  /// text and updates the track everywhere it's currently held in
+  /// memory (catalog, search results) so the lyrics panel reflects it
+  /// immediately without a full reload.
   Future<void> setLyrics({required String trackId, required String lyrics}) async {
     final updated = await _api.setLyrics(trackId: trackId, lyrics: lyrics);
     _tracks = _tracks.map((t) => t.id == trackId ? updated : t).toList();

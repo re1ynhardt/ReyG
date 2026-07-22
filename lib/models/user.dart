@@ -32,6 +32,19 @@ class AppUser {
   /// Requirement #11: developer accounts get a badge + the ability to
   /// upload tracks directly from inside the app.
   final bool isDeveloper;
+  /// "Исполнитель" (performer/artist) role: like developers, these
+  /// accounts can upload tracks, delete tracks, and delete hashtags —
+  /// but don't get the rest of the developer-only surface (featured
+  /// tags, artist avatars, lyrics editing, account management). Set at
+  /// registration from [YandexStorageConfig.performerEmails] — see
+  /// lib/main.dart.
+  final bool isPerformer;
+  /// "Поддержка" (support) role: exactly the same rights as developer
+  /// accounts (see [isDeveloper]) — just a separate role/badge so support
+  /// staff can be distinguished from the app's developers. Set at
+  /// registration from [YandexStorageConfig.supportEmails] — see
+  /// lib/main.dart.
+  final bool isSupport;
   final String token;
   /// Public URL of the user's custom avatar, uploaded to Yandex Object
   /// Storage from the Settings screen. Empty when the user hasn't set one,
@@ -57,6 +70,8 @@ class AppUser {
     required this.email,
     required this.displayName,
     required this.isDeveloper,
+    this.isPerformer = false,
+    this.isSupport = false,
     required this.token,
     this.avatarUrl = '',
     this.bannerUrl = '',
@@ -69,6 +84,8 @@ class AppUser {
         email: json['email'] as String,
         displayName: json['display_name'] as String? ?? json['email'] as String,
         isDeveloper: json['is_developer'] as bool? ?? false,
+        isPerformer: json['is_performer'] as bool? ?? false,
+        isSupport: json['is_support'] as bool? ?? false,
         token: json['token'] as String? ?? '',
         avatarUrl: json['avatar_url'] as String? ?? '',
         bannerUrl: json['banner_url'] as String? ?? '',
@@ -81,6 +98,8 @@ class AppUser {
         'email': email,
         'display_name': displayName,
         'is_developer': isDeveloper,
+        'is_performer': isPerformer,
+        'is_support': isSupport,
         'token': token,
         'avatar_url': avatarUrl,
         'banner_url': bannerUrl,
@@ -100,6 +119,8 @@ class AppUser {
         email: email,
         displayName: displayName ?? this.displayName,
         isDeveloper: isDeveloper,
+        isPerformer: isPerformer,
+        isSupport: isSupport,
         token: token,
         avatarUrl: avatarUrl ?? this.avatarUrl,
         bannerUrl: bannerUrl ?? this.bannerUrl,

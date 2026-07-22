@@ -175,7 +175,7 @@ class _SelfProfileCard extends StatelessWidget {
                       clipBehavior: Clip.none,
                       children: [
                         ArtistAvatar(imageUrl: user.avatarUrl, radius: 24),
-                        if (user.isDeveloper)
+                        if (user.isDeveloper || user.isSupport || user.isPerformer)
                           Positioned(
                             right: -2,
                             bottom: -2,
@@ -185,7 +185,11 @@ class _SelfProfileCard extends StatelessWidget {
                                 color: theme.scaffoldBackgroundColor,
                                 shape: BoxShape.circle,
                               ),
-                              child: Icon(Icons.verified, size: 16, color: theme.colorScheme.primary),
+                              child: Icon(
+                                (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
+                                size: 16,
+                                color: theme.colorScheme.primary,
+                              ),
                             ),
                           ),
                       ],
@@ -247,7 +251,7 @@ class _UserTile extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           ArtistAvatar(imageUrl: user.avatarUrl, radius: 22),
-          if (user.isDeveloper)
+          if (user.isDeveloper || user.isSupport || user.isPerformer)
             Positioned(
               right: -2,
               bottom: -2,
@@ -258,7 +262,7 @@ class _UserTile extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  Icons.verified,
+                  (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
                   size: 16,
                   color: Theme.of(context).colorScheme.primary,
                 ),
@@ -270,11 +274,17 @@ class _UserTile extends StatelessWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (user.isDeveloper)
+          if (user.isDeveloper || user.isSupport || user.isPerformer)
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Chip(
-                label: Text(context.tr('developer_account')),
+                label: Text(
+                  user.isDeveloper
+                      ? context.tr('developer_account')
+                      : user.isSupport
+                          ? context.tr('support_account')
+                          : context.tr('performer_account'),
+                ),
                 visualDensity: VisualDensity.compact,
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),

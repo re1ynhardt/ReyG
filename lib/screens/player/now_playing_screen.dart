@@ -422,7 +422,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
   /// widget (no widget both shows a chip AND wraps the whole row in a
   /// second tap handler) so taps can't double-fire between an outer and
   /// an inner GestureDetector.
-  Widget _buildHashtagsField(BuildContext context, Track track, bool isAdmin) {
+  Widget _buildHashtagsField(BuildContext context, Track track, bool canManageTracks) {
     final tags = track.hashtags;
     final canAddMore = tags.length < Track.maxHashtags;
 
@@ -461,7 +461,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
                 for (final tag in tags)
                   _HashtagChip(
                     tag: tag,
-                    onTap: () => isAdmin
+                    onTap: () => canManageTracks
                         ? _showDeleteHashtagDialog(context, track, tag)
                         : _showAddHashtagDialog(context, track),
                   ),
@@ -589,7 +589,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
                   _buildHashtagsField(
                     context,
                     library.trackById(track.id) ?? track,
-                    context.watch<AuthProvider>().isDeveloper,
+                    context.watch<AuthProvider>().canManageTracks,
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -847,7 +847,7 @@ class _LyricsPanelState extends State<_LyricsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final isDeveloper = context.watch<AuthProvider>().isDeveloper;
+    final canEditLyrics = context.watch<AuthProvider>().canManageTracks;
     final size = MediaQuery.of(context).size;
     final panelWidth = (size.width - 32).clamp(0.0, 340.0);
 
@@ -881,7 +881,7 @@ class _LyricsPanelState extends State<_LyricsPanel> {
                   // frosted-glass background above.
                   child: Material(
                     type: MaterialType.transparency,
-                    child: _buildContent(context, isDeveloper),
+                    child: _buildContent(context, canEditLyrics),
                   ),
                 ),
               ),
@@ -892,7 +892,7 @@ class _LyricsPanelState extends State<_LyricsPanel> {
     );
   }
 
-  Widget _buildContent(BuildContext context, bool isDeveloper) {
+  Widget _buildContent(BuildContext context, bool canEditLyrics) {
     if (_loading) {
       return const SizedBox(
         height: 72,
@@ -978,7 +978,7 @@ class _LyricsPanelState extends State<_LyricsPanel> {
             context.tr('no_lyrics'),
             style: TextStyle(color: Colors.white.withOpacity(0.75), height: 1.4),
           ),
-          if (isDeveloper) ...[
+          if (canEditLyrics) ...[
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -1007,7 +1007,7 @@ class _LyricsPanelState extends State<_LyricsPanel> {
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
               ),
             ),
-            if (isDeveloper)
+            if (canEditLyrics)
               IconButton(
                 icon: const Icon(Icons.edit_rounded, size: 18, color: Colors.white70),
                 tooltip: context.tr('edit_lyrics'),

@@ -87,6 +87,17 @@ class CommunityProvider extends ChangeNotifier {
     return _api.setUserPassword(userId: userId, newPassword: newPassword);
   }
 
+  /// Developer-only (strictly — support accounts can't call this
+  /// either). Re-syncs every account's role flags with the app's
+  /// current developer/support/performer email lists, then reloads the
+  /// locally cached user list so any changed badges show up right away.
+  /// Returns the number of accounts whose role actually changed.
+  Future<int> syncAccountRoles() async {
+    final updated = await _api.syncAccountRoles();
+    await loadUsers();
+    return updated;
+  }
+
   /// Toggles whether [userId] is one of the signed-in user's favorite
   /// accounts. Updates optimistically (so the star/list reorders
   /// instantly) and rolls back if the backend call fails.

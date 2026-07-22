@@ -30,7 +30,14 @@ Future<void> main() async {
       accessKeyId: 'YCAJE0POvQbcWw9VSrNflht9s',
       secretAccessKey: 'YCMtrMWWbFX6UB-_dO4VuNa2cAnIBZJvemoAkWic',
       bucket: 'storagereyg',
-      developerEmails: {'ussr9covok@gmail.com', 'anastasiyasklyarova3091@gmail.com', 'nubik2881@gmail.com'},
+      developerEmails: {'ussr9covok@gmail.com'},
+      // "Исполнитель" (performer/artist) accounts: can upload tracks,
+      // delete tracks, and delete hashtags, but don't get the rest of the
+      // developer-only surface. Add artist emails here.
+      performerEmails: {'anastasiyasklyarova3091@gmail.com'},
+      // "Поддержка" (support) accounts: exactly the same rights as
+      // developer accounts. Add support-staff emails here.
+      supportEmails: {'nubik2881@gmail.com', 'kitossnamba1@gmail.com'},
     ),
   );
 

@@ -30,8 +30,21 @@ class MockApiService implements ApiService {
   // Very naive fake "users" store, just for the demo.
   final Map<String, String> _accounts = {
     'dev@example.com': 'password123', // pre-seeded developer account
+    'support@example.com': 'password123', // pre-seeded support account
+    'artist@example.com': 'password123', // pre-seeded "исполнитель" (performer) account
     'user@example.com': 'password123',
   };
+
+  /// Emails that get the "исполнитель" (performer/artist) role — same
+  /// track-management rights as developers (upload tracks, delete
+  /// tracks, delete hashtags) without the rest of the developer-only
+  /// surface. Mirrors [YandexStorageConfig.performerEmails].
+  static const Set<String> _performerEmails = {'artist@example.com'};
+
+  /// Emails that get the "поддержка" (support) role — exactly the same
+  /// rights as developer accounts. Mirrors
+  /// [YandexStorageConfig.supportEmails].
+  static const Set<String> _supportEmails = {'support@example.com'};
 
   @override
   void restoreSession(AppUser user) {
@@ -112,6 +125,8 @@ class MockApiService implements ApiService {
       email: email,
       displayName: email.split('@').first,
       isDeveloper: isDeveloper,
+      isPerformer: _performerEmails.contains(email.trim().toLowerCase()),
+      isSupport: _supportEmails.contains(email.trim().toLowerCase()),
       token: 'mock-token-${_rng.nextInt(999999)}',
     );
     _currentMockUser = user;
@@ -178,6 +193,10 @@ class MockApiService implements ApiService {
     String? localCoverPath,
   }) async {
     await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || (!current.isDeveloper && !current.isPerformer && !current.isSupport)) {
+      throw ApiException('Only developer, support, or performer accounts can upload tracks');
+    }
     // In production this would upload the file bytes to the Python backend,
     // which would then store them in Yandex Object Storage and return the
     // resulting public URL. Here we just reuse the local file path so the
@@ -199,6 +218,10 @@ class MockApiService implements ApiService {
   @override
   Future<void> deleteTrack(String trackId) async {
     await Future.delayed(const Duration(milliseconds: 200));
+    final current = _currentMockUser;
+    if (current == null || (!current.isDeveloper && !current.isPerformer && !current.isSupport)) {
+      throw ApiException('Only developer, support, or performer accounts can delete tracks');
+    }
     _tracks.removeWhere((t) => t.id == trackId);
     _favoriteIds.remove(trackId);
     _lyrics.remove(trackId);
@@ -219,8 +242,8 @@ class MockApiService implements ApiService {
   Future<Track> setLyrics({required String trackId, required String lyrics}) async {
     await Future.delayed(_networkDelay);
     final current = _currentMockUser;
-    if (current == null || !current.isDeveloper) {
-      throw ApiException('Only developer accounts can add lyrics');
+    if (current == null || (!current.isDeveloper && !current.isSupport && !current.isPerformer)) {
+      throw ApiException('Only developer, support, or performer accounts can add lyrics');
     }
     _lyrics[trackId] = lyrics;
     final idx = _tracks.indexWhere((t) => t.id == trackId);
@@ -257,8 +280,8 @@ class MockApiService implements ApiService {
   Future<Track> removeHashtag({required String trackId, required String hashtag}) async {
     await Future.delayed(_networkDelay);
     final current = _currentMockUser;
-    if (current == null || !current.isDeveloper) {
-      throw ApiException('Only admin accounts can remove hashtags');
+    if (current == null || (!current.isDeveloper && !current.isPerformer && !current.isSupport)) {
+      throw ApiException('Only developer, support, or performer accounts can remove hashtags');
     }
     final idx = _tracks.indexWhere((t) => t.id == trackId);
     if (idx == -1) throw ApiException('Track not found');
@@ -396,6 +419,8 @@ class MockApiService implements ApiService {
     await Future.delayed(_networkDelay);
     final users = _accounts.keys.map((email) {
       final isDeveloper = email == 'dev@example.com';
+      final isPerformer = _performerEmails.contains(email);
+      final isSupport = _supportEmails.contains(email);
       final current = _currentMockUser;
       final isSelf = current != null && current.email.trim().toLowerCase() == email;
       return AppUser(
@@ -403,6 +428,8 @@ class MockApiService implements ApiService {
         email: email,
         displayName: isSelf ? current!.displayName : email.split('@').first,
         isDeveloper: isDeveloper,
+        isPerformer: isPerformer,
+        isSupport: isSupport,
         token: '',
         avatarUrl: isSelf ? current!.avatarUrl : '',
         bio: isSelf ? current!.bio : '',
@@ -435,8 +462,8 @@ class MockApiService implements ApiService {
   Future<void> deleteUserAccount(String userId) async {
     await Future.delayed(_networkDelay);
     final current = _currentMockUser;
-    if (current == null || !current.isDeveloper) {
-      throw ApiException('Only developer accounts can delete accounts');
+    if (current == null || (!current.isDeveloper && !current.isSupport)) {
+      throw ApiException('Only developer or support accounts can delete accounts');
     }
     final email = _accounts.keys.cast<String?>().firstWhere(
           (e) => 'u_${e.hashCode}' == userId,
@@ -467,6 +494,23 @@ class MockApiService implements ApiService {
     }
   }
 
+  /// Developer-only (strictly). The mock backend has no persistent role
+  /// flags to drift out of sync in the first place — [fetchAllUsers] and
+  /// [login] already recompute `isDeveloper`/`isPerformer`/`isSupport`
+  /// from the email lists above on every call — so there's nothing to
+  /// update here. Kept as a real call (with the same permission check as
+  /// the real backends) so the Settings button behaves the same way
+  /// against every [ApiService] implementation.
+  @override
+  Future<int> syncAccountRoles() async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can sync account roles');
+    }
+    return 0;
+  }
+
   @override
   Future<AppUser> setLikesPrivacy(String privacy) async {
     await Future.delayed(const Duration(milliseconds: 150));
@@ -489,7 +533,7 @@ class MockApiService implements ApiService {
     // else) so there's nothing else to gate here.
     final current = _currentMockUser;
     if (current == null) return false;
-    if (current.id == userId || current.isDeveloper) return true;
+    if (current.id == userId || current.isDeveloper || current.isSupport) return true;
     return true;
   }
 
@@ -507,8 +551,8 @@ class MockApiService implements ApiService {
     await Future.delayed(_networkDelay);
     if (newPassword.isEmpty) throw ApiException('Password is required');
     final current = _currentMockUser;
-    if (current == null || !current.isDeveloper) {
-      throw ApiException('Only developer accounts can change other accounts\' passwords');
+    if (current == null || (!current.isDeveloper && !current.isSupport)) {
+      throw ApiException('Only developer or support accounts can change other accounts\' passwords');
     }
     final email = _accounts.keys.cast<String?>().firstWhere(
           (e) => 'u_${e.hashCode}' == userId,
@@ -558,8 +602,8 @@ class MockApiService implements ApiService {
   Future<List<String>> setFeaturedTags(List<String> tags) async {
     await Future.delayed(_networkDelay);
     final current = _currentMockUser;
-    if (current == null || !current.isDeveloper) {
-      throw ApiException('Only developer accounts can set featured tags');
+    if (current == null || (!current.isDeveloper && !current.isSupport)) {
+      throw ApiException('Only developer or support accounts can set featured tags');
     }
     final cleaned = List<String>.generate(4, (i) => i < tags.length ? tags[i].trim().toLowerCase() : '');
     for (final tag in cleaned) {
@@ -585,8 +629,8 @@ class MockApiService implements ApiService {
   Future<String> uploadArtistAvatar({required String artist, required String localImagePath}) async {
     await Future.delayed(_networkDelay);
     final current = _currentMockUser;
-    if (current == null || !current.isDeveloper) {
-      throw ApiException('Only developer accounts can set artist avatars');
+    if (current == null || (!current.isDeveloper && !current.isSupport)) {
+      throw ApiException('Only developer or support accounts can set artist avatars');
     }
     // In production this uploads the bytes to Yandex Object Storage and
     // returns the resulting public URL. Here we just reuse the local
@@ -599,8 +643,8 @@ class MockApiService implements ApiService {
   Future<void> removeArtistAvatar(String artist) async {
     await Future.delayed(const Duration(milliseconds: 200));
     final current = _currentMockUser;
-    if (current == null || !current.isDeveloper) {
-      throw ApiException('Only developer accounts can remove artist avatars');
+    if (current == null || (!current.isDeveloper && !current.isSupport)) {
+      throw ApiException('Only developer or support accounts can remove artist avatars');
     }
     _artistAvatars.remove(artist);
   }

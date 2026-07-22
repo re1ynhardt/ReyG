@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_state.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/library_provider.dart';
 
 class UploadScreen extends StatefulWidget {
@@ -71,6 +72,8 @@ class _UploadScreenState extends State<UploadScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final isSupport = auth.isSupport;
     return Scaffold(
       appBar: AppBar(title: Text(context.tr('upload_track'))),
       body: SingleChildScrollView(
@@ -90,7 +93,7 @@ class _UploadScreenState extends State<UploadScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      context.tr('developer_account'),
+                      isSupport ? context.tr('support_account') : context.tr('performer_account'),
                       style: TextStyle(color: Theme.of(context).colorScheme.secondary, fontWeight: FontWeight.w600),
                     ),
                   ),

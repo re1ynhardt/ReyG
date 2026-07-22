@@ -14,7 +14,7 @@ class PlaylistPickerSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
     final downloads = context.watch<DownloadService>();
-    final isDeveloper = context.watch<AuthProvider>().isDeveloper;
+    final canManageTracks = context.watch<AuthProvider>().canManageTracks;
     final isFav = library.isFavorite(track.id);
     final isCached = downloads.isCached(track.id);
     final isCaching = downloads.isCaching(track.id);
@@ -82,7 +82,7 @@ class PlaylistPickerSheet extends StatelessWidget {
               }
             },
           ),
-          if (isDeveloper) ...[
+          if (canManageTracks) ...[
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),

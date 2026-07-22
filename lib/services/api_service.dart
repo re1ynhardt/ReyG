@@ -46,8 +46,9 @@ abstract class ApiService {
   /// panel is opened), not a database.
   Future<String?> fetchLyrics(Track track);
 
-  /// Developer-only: uploads/overwrites the lyrics text for a track and
-  /// returns the updated [Track] (with `lyricsUrl` populated).
+  /// Developer, support, or performer accounts only: uploads/overwrites
+  /// the lyrics text for a track and returns the updated [Track] (with
+  /// `lyricsUrl` populated).
   Future<Track> setLyrics({required String trackId, required String lyrics});
 
   /// Adds [hashtag] (without the leading '#') to [trackId]'s hashtags and
@@ -148,6 +149,18 @@ abstract class ApiService {
 
   /// Marks/unmarks [userId] as a favorite account for the current user.
   Future<void> setFavoriteUser({required String userId, required bool favorite});
+
+  /// Developer-only — unlike most "developer-only" methods here, support
+  /// accounts may NOT call this one either. Re-applies the current
+  /// developer/support/performer email lists (see [ApiService]'s
+  /// implementations and their config) to every registered account, so
+  /// an account whose role changed in a newer build of the app (e.g. an
+  /// email that's now in the support list but registered before support
+  /// existed) gets its stored role flags brought in line with the app's
+  /// config, without needing to delete and re-register that account.
+  /// Returns the number of accounts whose role flags actually changed.
+  /// Throws [ApiException] for any non-developer caller.
+  Future<int> syncAccountRoles();
 
   // --- Privacy --------------------------------------------------------------
   /// Updates the current user's setting for who can see their liked

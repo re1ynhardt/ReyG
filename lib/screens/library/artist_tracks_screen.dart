@@ -303,8 +303,8 @@ class _ArtistTracksScreenState extends State<ArtistTracksScreen>
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             GestureDetector(
-                              onTap: (auth.isDeveloper && !_avatarBusy) ? _pickAndUploadAvatar : null,
-                              child: _buildAvatar(context, avatarUrl, isDeveloper: auth.isDeveloper),
+                              onTap: (auth.hasDeveloperRights && !_avatarBusy) ? _pickAndUploadAvatar : null,
+                              child: _buildAvatar(context, avatarUrl, isDeveloper: auth.hasDeveloperRights),
                             ),
                             const SizedBox(width: 14),
                             Expanded(
@@ -322,7 +322,7 @@ class _ArtistTracksScreenState extends State<ArtistTracksScreen>
                           '${tracks.length} ${context.tr('all_tracks').toLowerCase()}',
                           style: TextStyle(color: Theme.of(context).hintColor, fontSize: 13),
                         ),
-                        if (auth.isDeveloper)
+                        if (auth.hasDeveloperRights)
                           Wrap(
                             spacing: 4,
                             children: [

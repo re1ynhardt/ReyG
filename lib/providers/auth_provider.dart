@@ -23,6 +23,19 @@ class AuthProvider extends ChangeNotifier {
   String? get error => _error;
   bool get busy => _busy;
   bool get isDeveloper => _user?.isDeveloper ?? false;
+  bool get isPerformer => _user?.isPerformer ?? false;
+  /// "Поддержка" (support) role — exactly the same rights as [isDeveloper],
+  /// just a separate role/badge for support staff.
+  bool get isSupport => _user?.isSupport ?? false;
+  /// True for developer and support accounts — use this wherever the UI
+  /// is gating a developer-only action, instead of checking [isDeveloper]
+  /// alone, so support accounts get identical rights.
+  bool get hasDeveloperRights => isDeveloper || isSupport;
+  /// Developers, support, and performers ("исполнитель") all get track-management
+  /// rights (upload, delete tracks, delete hashtags, add/edit lyrics) —
+  /// use this wherever the UI is gating one of those, instead of
+  /// checking isDeveloper alone.
+  bool get canManageTracks => isDeveloper || isPerformer || isSupport;
 
   static const _kUserKey = 'current_user';
 

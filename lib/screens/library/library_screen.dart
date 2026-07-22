@@ -93,7 +93,7 @@ class LibraryScreen extends StatelessWidget {
               ),
             )),
           ),
-          if (auth.isDeveloper)
+          if (auth.canManageTracks)
             ListTile(
               leading: Container(
                 width: 48,
@@ -109,7 +109,10 @@ class LibraryScreen extends StatelessWidget {
                 children: [
                   const Icon(Icons.verified, size: 14),
                   const SizedBox(width: 4),
-                  Text(context.tr('developer_account'), style: const TextStyle(fontSize: 12)),
+                  Text(
+                    auth.isSupport ? context.tr('support_account') : context.tr('performer_account'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ],
               ),
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UploadScreen())),
