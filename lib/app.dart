@@ -9,6 +9,7 @@ import 'screens/splash_gate.dart';
 import 'services/api_service.dart';
 import 'services/download_service.dart';
 import 'theme/app_theme.dart';
+import 'widgets/bubbles_background.dart';
 
 class HarmonyApp extends StatelessWidget {
   const HarmonyApp({super.key, required this.api});
@@ -36,6 +37,12 @@ class HarmonyApp extends StatelessWidget {
             title: 'ReyMusic',
             theme: appState.themeOption.themeData,
             home: const SplashGate(),
+            builder: (context, child) {
+              if (appState.themeOption == AppThemeOption.bubbles && child != null) {
+                return BubblesBackground(child: child);
+              }
+              return child ?? const SizedBox.shrink();
+            },
           );
         },
       ),

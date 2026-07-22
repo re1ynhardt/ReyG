@@ -97,6 +97,22 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Uploads a new profile banner for the current user and persists the
+  /// updated profile locally so it survives app restarts. Throws
+  /// [ApiException] if the backend rejects the file (e.g. over the 5 MB
+  /// limit) — callers should surface that message to the user.
+  Future<void> uploadBanner(String localImagePath) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      final updated = await _api.uploadBanner(localImagePath);
+      await _persist(updated);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
   /// Updates who can see the current user's liked tracks and playlists
   /// (see [LikesPrivacy]) and persists the change locally. Throws
   /// [ApiException] on failure.

@@ -11,6 +11,7 @@ import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme/app_theme.dart';
 import 'featured_tags_screen.dart';
+import 'themes_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -23,6 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _maxAvatarBytes = 5 * 1024 * 1024;
 
   bool _uploadingAvatar = false;
+  bool _uploadingBanner = false;
   bool _updatingPrivacy = false;
   bool _updatingPassword = false;
   bool _updatingBio = false;
@@ -641,6 +643,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _pickAndUploadBanner() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    final picked = result?.files.single;
+    if (picked?.path == null) return;
+
+    if ((picked!.size) > _maxAvatarBytes) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_trStatic(context, 'banner_too_large'))));
+      }
+      return;
+    }
+
+    setState(() => _uploadingBanner = true);
+    try {
+      await context.read<AuthProvider>().uploadBanner(picked.path!);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_trStatic(context, 'banner_updated'))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingBanner = false);
+    }
+  }
+
   Widget _buildAvatar(BuildContext context, String? avatarUrl, String? displayName) {
     final url = (avatarUrl != null && avatarUrl.isNotEmpty) ? avatarUrl : null;
     final ImageProvider? image =
@@ -728,6 +759,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
               ),
             ),
+          ),
+          ListTile(
+            leading: Icon(_uploadingBanner ? Icons.hourglass_top : Icons.image_outlined),
+            title: Text(context.tr('change_banner')),
+            onTap: _uploadingBanner ? null : _pickAndUploadBanner,
+            trailing: _uploadingBanner
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.chevron_right),
           ),
           ListTile(
             leading: const Icon(Icons.badge_outlined),
@@ -830,18 +873,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(context.tr('theme'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           ),
-          ...AppThemeOption.values.map(
-            (option) => RadioListTile<AppThemeOption>(
-              title: Text(context.tr(option.labelKey)),
-              secondary: CircleAvatar(
-                radius: 14,
-                backgroundColor: option.swatch,
-                child: Icon(option.icon, size: 14, color: option.isDark ? Colors.white : Colors.black87),
+          ListTile(
+            leading: CircleAvatar(
+              radius: 16,
+              backgroundColor: appState.themeOption.swatch,
+              child: Icon(
+                appState.themeOption.icon,
+                size: 16,
+                color: appState.themeOption.isDark ? Colors.white : Colors.black87,
               ),
-              value: option,
-              groupValue: appState.themeOption,
-              onChanged: (v) => appState.setTheme(v!),
             ),
+            title: Text(context.tr('themes_category')),
+            subtitle: Text(context.tr('themes_category_subtitle')),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ThemesScreen())),
           ),
           if (auth.isDeveloper) ...[
             const Divider(height: 24),

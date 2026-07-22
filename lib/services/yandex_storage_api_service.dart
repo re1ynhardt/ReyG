@@ -84,6 +84,7 @@ class YandexStorageApiService implements ApiService {
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
   static const _avatarsPrefix = 'media/avatars/';
+  static const _bannersPrefix = 'media/banners/';
   static const _artistAvatarsPrefix = 'media/artist_avatars/';
   static const _lyricsPrefix = 'media/lyrics/';
   static const _maxRetries = 8;
@@ -229,6 +230,7 @@ class YandexStorageApiService implements ApiService {
         'is_developer': config.developerEmails.contains(normalizedEmail),
         'token': _randomId(),
         'avatar_url': '',
+        'banner_url': '',
         'likes_privacy': LikesPrivacy.all,
         'bio': '',
       };
@@ -266,6 +268,7 @@ class YandexStorageApiService implements ApiService {
         isDeveloper: row['is_developer'] as bool? ?? false,
         token: row['token'] as String,
         avatarUrl: row['avatar_url'] as String? ?? '',
+        bannerUrl: row['banner_url'] as String? ?? '',
         likesPrivacy: row['likes_privacy'] as String? ?? LikesPrivacy.all,
         bio: row['bio'] as String? ?? '',
       );
@@ -510,6 +513,47 @@ class YandexStorageApiService implements ApiService {
     return _userFromRow(row);
   }
 
+  /// Uploads a custom profile banner for the currently logged-in user.
+  /// Same flow as [uploadAvatar]: size-checked locally, uploaded to
+  /// `media/banners/` (public-read), then the user's row is updated so
+  /// the new banner sticks across sessions/devices, with best-effort
+  /// cleanup of the old banner file.
+  @override
+  Future<AppUser> uploadBanner(String localImagePath) async {
+    final user = await _currentUserRow();
+
+    final file = File(localImagePath);
+    final sizeBytes = await file.length();
+    if (sizeBytes > _maxAvatarBytes) {
+      throw ApiException('Image is too large — max 5 MB');
+    }
+
+    final oldBannerUrl = user['banner_url'] as String?;
+    final bannerUrl = await _uploadMediaFile(localImagePath, _bannersPrefix);
+
+    final row = await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == user['id'],
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Unauthorized — no account matches this session');
+      match['banner_url'] = bannerUrl;
+      return match;
+    });
+
+    final oldKey = _keyFromPublicUrl(oldBannerUrl);
+    if (oldKey != null) {
+      try {
+        await _deleteObject(oldKey);
+      } catch (_) {
+        // Non-fatal.
+      }
+    }
+
+    return _userFromRow(row);
+  }
+
   // --- Community --------------------------------------------------------
   /// Every registered account, for the Community tab. Tokens are stripped
   /// (set to `''`) on the way out — these rows aren't the caller's own
@@ -527,6 +571,7 @@ class YandexStorageApiService implements ApiService {
               isDeveloper: r['is_developer'] as bool? ?? false,
               token: '',
               avatarUrl: r['avatar_url'] as String? ?? '',
+              bannerUrl: r['banner_url'] as String? ?? '',
               likesPrivacy: r['likes_privacy'] as String? ?? LikesPrivacy.all,
               bio: r['bio'] as String? ?? '',
             ))

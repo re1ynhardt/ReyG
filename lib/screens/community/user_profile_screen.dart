@@ -115,6 +115,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         child: ListView(
           padding: const EdgeInsets.only(bottom: 100),
           children: [
+            if (user.bannerUrl.isNotEmpty) _UserBannerImage(url: user.bannerUrl),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
               child: Row(
@@ -215,6 +216,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 /// Short profile description shown right under the avatar/name row on a
 /// Community profile (see [AppUser.bio], set from Settings). Only
 /// rendered when the account has actually set one.
+/// Wide banner image shown at the top of a profile, above the avatar
+/// row. Only rendered when the user has a `bannerUrl` set — there's no
+/// upload UI for it yet, so this only ever shows a banner that was set
+/// some other way (e.g. directly in storage).
+class _UserBannerImage extends StatelessWidget {
+  const _UserBannerImage({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 3,
+      child: CachedNetworkImage(
+        imageUrl: url,
+        fit: BoxFit.cover,
+        errorWidget: (context, _, __) => Container(color: Theme.of(context).cardColor),
+        placeholder: (context, _) => Container(color: Theme.of(context).cardColor),
+      ),
+    );
+  }
+}
+
 class _UserBioWidget extends StatelessWidget {
   const _UserBioWidget({required this.bio});
 

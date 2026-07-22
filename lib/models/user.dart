@@ -37,6 +37,12 @@ class AppUser {
   /// Storage from the Settings screen. Empty when the user hasn't set one,
   /// in which case the UI falls back to the display-name initial.
   final String avatarUrl;
+  /// Public URL of the user's profile banner image, shown behind/above
+  /// their avatar on the Community profile screen. Empty when the user
+  /// hasn't set one, in which case the UI falls back to a plain
+  /// background. Upload flow is not implemented yet — this only carries
+  /// a URL if the backend already has one set.
+  final String bannerUrl;
   /// Who can see this user's liked tracks and playlists — one of the
   /// [LikesPrivacy] values. Defaults to [LikesPrivacy.all].
   final String likesPrivacy;
@@ -53,6 +59,7 @@ class AppUser {
     required this.isDeveloper,
     required this.token,
     this.avatarUrl = '',
+    this.bannerUrl = '',
     this.likesPrivacy = LikesPrivacy.all,
     this.bio = '',
   });
@@ -64,6 +71,7 @@ class AppUser {
         isDeveloper: json['is_developer'] as bool? ?? false,
         token: json['token'] as String? ?? '',
         avatarUrl: json['avatar_url'] as String? ?? '',
+        bannerUrl: json['banner_url'] as String? ?? '',
         likesPrivacy: json['likes_privacy'] as String? ?? LikesPrivacy.all,
         bio: json['bio'] as String? ?? '',
       );
@@ -75,6 +83,7 @@ class AppUser {
         'is_developer': isDeveloper,
         'token': token,
         'avatar_url': avatarUrl,
+        'banner_url': bannerUrl,
         'likes_privacy': likesPrivacy,
         'bio': bio,
       };
@@ -82,6 +91,7 @@ class AppUser {
   AppUser copyWith({
     String? displayName,
     String? avatarUrl,
+    String? bannerUrl,
     String? likesPrivacy,
     String? bio,
   }) =>
@@ -92,6 +102,7 @@ class AppUser {
         isDeveloper: isDeveloper,
         token: token,
         avatarUrl: avatarUrl ?? this.avatarUrl,
+        bannerUrl: bannerUrl ?? this.bannerUrl,
         likesPrivacy: likesPrivacy ?? this.likesPrivacy,
         bio: bio ?? this.bio,
       );

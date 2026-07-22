@@ -257,6 +257,17 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<AppUser> uploadBanner(String localImagePath) async {
+    final request = http.MultipartRequest('POST', _u('/account/banner'));
+    if (authToken != null) request.headers['Authorization'] = 'Bearer $authToken';
+    request.files.add(await http.MultipartFile.fromPath('banner', localImagePath));
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    _throwIfError(res);
+    return AppUser.fromJson(jsonDecode(res.body));
+  }
+
+  @override
   Future<List<AppUser>> fetchAllUsers() async {
     final res = await http.get(_u('/community/users'), headers: _headers);
     _throwIfError(res);

@@ -382,6 +382,16 @@ class MockApiService implements ApiService {
   }
 
   @override
+  Future<AppUser> uploadBanner(String localImagePath) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final updated = current.copyWith(bannerUrl: localImagePath);
+    _currentMockUser = updated;
+    return updated;
+  }
+
+  @override
   Future<List<AppUser>> fetchAllUsers() async {
     await Future.delayed(_networkDelay);
     final users = _accounts.keys.map((email) {

@@ -100,6 +100,13 @@ abstract class ApiService {
   /// server-side/storage-side as a safety net.
   Future<AppUser> uploadAvatar(String localImagePath);
 
+  /// Uploads a custom profile banner image for the current user and
+  /// returns the updated [AppUser] (with the new `bannerUrl` populated).
+  /// Callers are expected to enforce the 5 MB size limit before calling
+  /// this — see [ApiException] thrown by implementations that also
+  /// enforce it server-side/storage-side as a safety net.
+  Future<AppUser> uploadBanner(String localImagePath);
+
   // --- Community ------------------------------------------------------------
   /// Every registered account, for the Community tab. Returned tokens are
   /// always blank (this isn't the current session, so there's nothing to
