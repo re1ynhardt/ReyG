@@ -19,9 +19,17 @@ class PlaylistPickerSheet extends StatelessWidget {
     final isCached = downloads.isCached(track.id);
     final isCaching = downloads.isCaching(track.id);
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child: ConstrainedBox(
+        // Caps the sheet's height so a long playlist list scrolls instead
+        // of overflowing past the bottom of the screen — without this, the
+        // fixed-size Column above could render taller than the available
+        // space (e.g. many playlists + the "Delete track" row for
+        // developer/performer accounts) and get clipped/overlapped.
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
           ListTile(
             leading: Icon(isFav ? Icons.favorite : Icons.favorite_border),
             title: Text(context.tr('favorites')),
@@ -91,7 +99,9 @@ class PlaylistPickerSheet extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }

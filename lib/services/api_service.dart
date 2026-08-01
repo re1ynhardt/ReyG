@@ -1,6 +1,7 @@
 import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/user.dart';
+import '../models/app_notification.dart';
 
 /// Every screen in the app talks to the backend ONLY through this
 /// interface. Today [MockApiService] answers with fake in-memory data.
@@ -162,6 +163,20 @@ abstract class ApiService {
   /// Throws [ApiException] for any non-developer caller.
   Future<int> syncAccountRoles();
 
+  /// Developer/support-only: publishes a new in-app-update build straight
+  /// from the app — uploads [localApkPath] to the public `app/latest.apk`
+  /// object, then writes `app/update.json` (see [UpdateService]) with the
+  /// given metadata, in that order, so `update.json` is only ever pointing
+  /// at an APK that's already fully uploaded. Throws [ApiException] for
+  /// any caller without developer/support rights.
+  Future<void> publishAppUpdate({
+    required String localApkPath,
+    required String version,
+    required int buildNumber,
+    required String notes,
+    required bool mandatory,
+  });
+
   // --- Privacy --------------------------------------------------------------
   /// Updates the current user's setting for who can see their liked
   /// tracks and playlists on their Community profile (one of the
@@ -203,6 +218,20 @@ abstract class ApiService {
   /// this for non-developer accounts and validate each non-empty tag the
   /// same way [addHashtag] does.
   Future<List<String>> setFeaturedTags(List<String> tags);
+
+  // --- Notifications ----------------------------------------------------
+  /// All broadcast notifications, newest first. Same list for every
+  /// account — shown in the notifications shade off the Home screen.
+  Future<List<AppNotification>> fetchNotifications();
+
+  /// Strictly developer-only (not support, not performer): posts a new
+  /// broadcast notification visible to every user. Implementations reject
+  /// this for any other account type.
+  Future<AppNotification> sendNotification({required String title, required String body});
+
+  /// Strictly developer-only: permanently removes a broadcast
+  /// notification. Implementations reject this for any other account type.
+  Future<void> deleteNotification(String id);
 
   // --- Artists --------------------------------------------------------
   /// Developer-set circular avatar URLs, keyed by exact artist name.

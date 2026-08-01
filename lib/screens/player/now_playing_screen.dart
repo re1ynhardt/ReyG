@@ -482,12 +482,6 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
     );
   }
 
-  String _fmt(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(1, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
   /// Just the sharp cover now — the glow moved to a full-screen ambient
   /// background (see [_buildAmbientBackground]) so it can be large
   /// enough to reach the top of the screen without reading as a small
@@ -543,17 +537,32 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
 
   @override
   Widget build(BuildContext context) {
-    final player = context.watch<PlayerProvider>();
+    // PERF: this screen is heavy — a full-bleed 90-sigma ambient blur, the
+    // cover art, and a hashtags field all live in this same build(). The
+    // old code called `context.watch<PlayerProvider>()` here, which meant
+    // every one of those got rebuilt on every playback-position tick
+    // (several times a second) even though only the slider a few hundred
+    // lines down actually needs that value. `player` below is only used
+    // to call action methods (seek/next/previous/toggle...), which are
+    // stable references — so it's `read`, not `watch`. The few fields
+    // this build *does* need to react to (current track, play/repeat
+    // state) are pulled individually via `select`, so this whole method
+    // only reruns when one of *those* actually changes — never on a bare
+    // position tick. Position/duration are handled entirely inside
+    // [_PlaybackProgress] below, which is the only part of the screen
+    // that should be rebuilding several times a second.
+    final player = context.read<PlayerProvider>();
+    final track = context.select<PlayerProvider, Track?>((p) => p.currentTrack);
+    final isPlaying = context.select<PlayerProvider, bool>((p) => p.isPlaying);
+    final isRepeatOn = context.select<PlayerProvider, bool>((p) => p.isRepeatOn);
+    final isRepeatOne = context.select<PlayerProvider, bool>((p) => p.isRepeatOne);
     final library = context.watch<LibraryProvider>();
-    final track = player.currentTrack;
     final accent = Theme.of(context).colorScheme.secondary;
 
     if (track == null) {
       return const Scaffold(body: Center(child: Text('—')));
     }
 
-    final duration = player.duration ?? track.duration;
-    final position = player.position > duration ? duration : player.position;
     final isFav = library.isFavorite(track.id);
     final screenHeight = MediaQuery.of(context).size.height;
     final dragProgress = (_dragExtent.abs() / screenHeight).clamp(0.0, 1.0);
@@ -624,36 +633,15 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
                     ],
                   ),
                   const SizedBox(height: 8),
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 3,
-                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                    ),
-                    child: Slider(
-                      min: 0,
-                      max: duration.inMilliseconds.toDouble().clamp(1, double.infinity),
-                      value: position.inMilliseconds.toDouble().clamp(0, duration.inMilliseconds.toDouble()),
-                      onChanged: (v) => player.seek(Duration(milliseconds: v.toInt())),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(_fmt(position), style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
-                        Text(_fmt(duration), style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
-                      ],
-                    ),
-                  ),
+                  _PlaybackProgress(fallbackDuration: track.duration),
                   const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       IconButton(
                         iconSize: 22,
-                        icon: Icon(player.isRepeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded),
-                        color: player.isRepeatOn ? accent : Theme.of(context).hintColor,
+                        icon: Icon(isRepeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded),
+                        color: isRepeatOn ? accent : Theme.of(context).hintColor,
                         onPressed: player.toggleRepeat,
                       ),
                     ],
@@ -685,7 +673,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
                                   shape: BoxShape.circle,
                                 ),
                                 child: Icon(
-                                  player.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                  isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                                   size: 40,
                                   color: Theme.of(context).scaffoldBackgroundColor,
                                 ),
@@ -733,6 +721,59 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
           child: content,
         ),
       ),
+    );
+  }
+}
+
+String _fmt(Duration d) {
+  final m = d.inMinutes.remainder(60).toString().padLeft(1, '0');
+  final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+  return '$m:$s';
+}
+
+/// The seek slider + elapsed/total time labels — the only part of
+/// [NowPlayingScreen] that's meant to rebuild several times a second.
+/// Isolated into its own widget so the cover art, ambient blur, and
+/// hashtags field above it never repaint just because playback moved
+/// forward a fraction of a second.
+class _PlaybackProgress extends StatelessWidget {
+  const _PlaybackProgress({required this.fallbackDuration});
+
+  /// The track's own duration, used until the player reports a real one
+  /// (e.g. right after switching tracks, before the stream emits).
+  final Duration fallbackDuration;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = context.select<PlayerProvider, Duration>((p) => p.duration ?? fallbackDuration);
+    final rawPosition = context.select<PlayerProvider, Duration>((p) => p.position);
+    final position = rawPosition > duration ? duration : rawPosition;
+
+    return Column(
+      children: [
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 3,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+          ),
+          child: Slider(
+            min: 0,
+            max: duration.inMilliseconds.toDouble().clamp(1, double.infinity),
+            value: position.inMilliseconds.toDouble().clamp(0, duration.inMilliseconds.toDouble()),
+            onChanged: (v) => context.read<PlayerProvider>().seek(Duration(milliseconds: v.toInt())),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(_fmt(position), style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
+              Text(_fmt(duration), style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

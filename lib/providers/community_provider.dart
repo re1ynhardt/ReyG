@@ -98,6 +98,25 @@ class CommunityProvider extends ChangeNotifier {
     return updated;
   }
 
+  /// Developer/support-only. Straight passthrough to [ApiService.publishAppUpdate] —
+  /// uploads the picked APK and rewrites `app/update.json` so every device's
+  /// next "check for updates" (or silent startup check) picks it up.
+  Future<void> publishAppUpdate({
+    required String localApkPath,
+    required String version,
+    required int buildNumber,
+    required String notes,
+    required bool mandatory,
+  }) {
+    return _api.publishAppUpdate(
+      localApkPath: localApkPath,
+      version: version,
+      buildNumber: buildNumber,
+      notes: notes,
+      mandatory: mandatory,
+    );
+  }
+
   /// Toggles whether [userId] is one of the signed-in user's favorite
   /// accounts. Updates optimistically (so the star/list reorders
   /// instantly) and rolls back if the backend call fails.

@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/user.dart';
+import '../models/app_notification.dart';
 import 'api_service.dart';
 
 /// Real implementation that talks to your Python backend.
@@ -52,6 +53,9 @@ import 'api_service.dart';
 ///   POST   /artists/{artist}/avatar multipart(avatar)    -> {"avatar_url": "..."} (developer-only, max 5 MB, enforce server-side too)
 ///   DELETE /artists/{artist}/avatar                      -> 204 (developer-only)
 ///   POST   /community/sync_roles                          -> {"updated": N} (developer-only, NOT support)
+///   GET    /notifications                                 -> [notification json, ...]
+///   POST   /notifications      {title, body}               -> notification json (developer-only, NOT support)
+///   DELETE /notifications/{id}                              -> 204 (developer-only, NOT support)
 class RemoteApiService implements ApiService {
   RemoteApiService({required this.baseUrl, this.authToken});
 
@@ -329,6 +333,31 @@ class RemoteApiService implements ApiService {
     return (jsonDecode(res.body) as Map<String, dynamic>)['updated'] as int? ?? 0;
   }
 
+  /// Mirrors [uploadAvatar]'s multipart pattern. This old Flask backend
+  /// predates the app-update feature, so this assumes a hypothetical
+  /// `/admin/publish_update` endpoint that stores the APK and writes
+  /// `update.json` server-side — add that route if you ever go back to
+  /// running this backend instead of [YandexStorageApiService].
+  @override
+  Future<void> publishAppUpdate({
+    required String localApkPath,
+    required String version,
+    required int buildNumber,
+    required String notes,
+    required bool mandatory,
+  }) async {
+    final request = http.MultipartRequest('POST', _u('/admin/publish_update'));
+    if (authToken != null) request.headers['Authorization'] = 'Bearer $authToken';
+    request.fields['version'] = version;
+    request.fields['buildNumber'] = '$buildNumber';
+    request.fields['notes'] = notes;
+    request.fields['mandatory'] = '$mandatory';
+    request.files.add(await http.MultipartFile.fromPath('apk', localApkPath));
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    _throwIfError(res);
+  }
+
   @override
   Future<AppUser> setLikesPrivacy(String privacy) async {
     final res = await http.put(
@@ -392,6 +421,29 @@ class RemoteApiService implements ApiService {
         headers: _headers, body: jsonEncode({'tags': tags}));
     _throwIfError(res);
     return (jsonDecode(res.body) as List).map((e) => e as String).toList();
+  }
+
+  @override
+  Future<List<AppNotification>> fetchNotifications() async {
+    final res = await http.get(_u('/notifications'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as List)
+        .map((e) => AppNotification.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<AppNotification> sendNotification({required String title, required String body}) async {
+    final res = await http.post(_u('/notifications'),
+        headers: _headers, body: jsonEncode({'title': title, 'body': body}));
+    _throwIfError(res);
+    return AppNotification.fromJson(jsonDecode(res.body));
+  }
+
+  @override
+  Future<void> deleteNotification(String id) async {
+    final res = await http.delete(_u('/notifications/$id'), headers: _headers);
+    _throwIfError(res);
   }
 
   @override

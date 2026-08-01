@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'app.dart';
 import 'services/api_service.dart';
 import 'services/audio_player_service.dart';
+import 'services/update_service.dart';
 import 'services/yandex_storage_api_service.dart';
 // Other backends, kept for reference (see the comment below):
 // import 'services/mock_api_service.dart';
@@ -45,5 +46,13 @@ Future<void> main() async {
   //   final ApiService api = MockApiService.instance; // in-memory demo data
   //   final ApiService api = RemoteApiService(baseUrl: 'http://<host>:8000'); // old VPS/Flask backend
 
-  runApp(HarmonyApp(api: api));
+  // In-app update checker — reads app/update.json from the same bucket.
+  // See lib/services/update_service.dart for the manifest format, the
+  // one-line AndroidManifest.xml permission it needs, and what to
+  // publish on every release.
+  final updateService = UpdateService(
+    manifestUrl: 'https://storage.yandexcloud.net/storagereyg/app/update.json',
+  );
+
+  runApp(HarmonyApp(api: api, updateService: updateService));
 }

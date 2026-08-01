@@ -13,6 +13,15 @@ import '../services/download_service.dart';
 /// otherwise (via [CachedNetworkImageProvider]) — so scrolling past the
 /// same covers again, even after restarting the app, doesn't re-download
 /// them. Callers don't need to know which path was used.
+///
+/// PERF NOTE: [DownloadService.notifyListeners] fires on *every network
+/// chunk* of a download in progress (several times a second), not just
+/// when a track finishes caching. This widget is instantiated once per
+/// track tile in every list on screen, so it must only rebuild when
+/// *its own* track's cover path changes — never on every notification
+/// from the service, or scrolling a list turns into a mass-rebuild storm
+/// for as long as anything anywhere is downloading. Hence `context.select`
+/// (scoped to `coverPathFor(track.id)`) instead of `context.watch`.
 class CachedCoverImage extends StatelessWidget {
   const CachedCoverImage({
     super.key,
@@ -31,7 +40,9 @@ class CachedCoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final localPath = context.watch<DownloadService>().coverPathFor(track.id);
+    final localPath = context.select<DownloadService, String?>(
+      (s) => s.coverPathFor(track.id),
+    );
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final cacheWidth = width != null ? (width! * dpr).round() : null;
     final cacheHeight = height != null ? (height! * dpr).round() : null;

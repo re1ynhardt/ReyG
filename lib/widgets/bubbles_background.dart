@@ -47,13 +47,15 @@ class _BubblesBackgroundState extends State<BubblesBackground> with SingleTicker
       children: [
         Positioned.fill(
           child: IgnorePointer(
-            child: AnimatedBuilder(
-              animation: _controller,
-              builder: (context, _) {
-                return CustomPaint(
-                  painter: _BubblesPainter(bubbles: _bubbles, t: _controller.value, color: accent),
-                );
-              },
+            child: RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) {
+                  return CustomPaint(
+                    painter: _BubblesPainter(bubbles: _bubbles, t: _controller.value, color: accent),
+                  );
+                },
+              ),
             ),
           ),
         ),

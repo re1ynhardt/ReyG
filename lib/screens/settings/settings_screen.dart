@@ -4,13 +4,17 @@ import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../../l10n/app_strings.dart';
 import '../../models/user.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/community_provider.dart';
+import '../../providers/notifications_provider.dart';
+import '../../services/update_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/update_prompt.dart';
 import 'banner_crop_screen.dart';
 import 'featured_tags_screen.dart';
 import 'themes_screen.dart';
@@ -24,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   static const _maxAvatarBytes = 5 * 1024 * 1024;
+  static const _maxBannerBytes = 10 * 1024 * 1024;
 
   bool _uploadingAvatar = false;
   bool _uploadingBanner = false;
@@ -32,6 +37,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _updatingBio = false;
   bool _updatingDisplayName = false;
   bool _syncingRoles = false;
+  bool _sendingNotification = false;
+  bool _checkingForUpdates = false;
+  bool _publishingUpdate = false;
+  PackageInfo? _packageInfo;
+
+  @override
+  void initState() {
+    super.initState();
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _packageInfo = info);
+    });
+  }
+
+  Future<void> _checkForUpdates() async {
+    setState(() => _checkingForUpdates = true);
+    try {
+      await checkForUpdatesAndPrompt(
+        context,
+        service: context.read<UpdateService>(),
+        silent: false,
+      );
+    } finally {
+      if (mounted) setState(() => _checkingForUpdates = false);
+    }
+  }
 
   InputDecoration _passwordFieldDecoration(
     ThemeData theme, {
@@ -586,7 +616,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
     );
     if (confirmed != true || !mounted) return;
-    context.read<AuthProvider>().logout();
+    await context.read<AuthProvider>().logout();
+    // AuthProvider swaps the base route's content to LoginScreen (see
+    // SplashGate), but that only changes what's *underneath* — any
+    // screens pushed on top (this Settings screen, and whatever it was
+    // pushed from) stay on the Navigator stack and would otherwise keep
+    // covering it. Pop back down to that base route so the login screen
+    // is actually what the user sees.
+    if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   Future<void> _setLikesPrivacy(String privacy) async {
@@ -653,6 +690,356 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Developer/support (see the `if (auth.hasDeveloperRights)` gate around
+  /// its ListTile below — same reach as [select_tags]). Picks a local
+  /// .apk, collects the update.json fields, then uploads both through
+  /// [CommunityProvider.publishAppUpdate] — see that method and
+  /// [ApiService.publishAppUpdate] for exactly what gets written where.
+  Future<void> _publishUpdate() async {
+    if (_publishingUpdate) return;
+    final formKey = GlobalKey<FormState>();
+    final versionController = TextEditingController();
+    final notesController = TextEditingController();
+    final buildNumberController = TextEditingController();
+    bool mandatory = false;
+    PlatformFile? pickedApk;
+
+    final info = _packageInfo ?? await PackageInfo.fromPlatform();
+    versionController.text = info.version;
+    buildNumberController.text = '${(int.tryParse(info.buildNumber) ?? 0) + 1}';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          dTheme.colorScheme.surface.withOpacity(0.72),
+                          dTheme.colorScheme.surface.withOpacity(0.5),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                    ),
+                    child: Form(
+                      key: formKey,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: dTheme.colorScheme.secondary.withOpacity(0.14),
+                              ),
+                              child: Icon(Icons.system_update_alt, color: dTheme.colorScheme.secondary, size: 22),
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              dialogContext.tr('publish_update'),
+                              textAlign: TextAlign.center,
+                              style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 20),
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                final result = await FilePicker.platform.pickFiles(
+                                  type: FileType.custom,
+                                  allowedExtensions: ['apk'],
+                                );
+                                final file = result?.files.single;
+                                if (file?.path == null) return;
+                                setDialogState(() => pickedApk = file);
+                              },
+                              icon: const Icon(Icons.folder_open),
+                              label: Text(
+                                pickedApk == null ? dialogContext.tr('publish_update_pick_apk') : pickedApk!.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: versionController,
+                              decoration: InputDecoration(labelText: dialogContext.tr('publish_update_version')),
+                              validator: (v) =>
+                                  (v == null || v.trim().isEmpty) ? dialogContext.tr('publish_update_version_required') : null,
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: buildNumberController,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(labelText: dialogContext.tr('publish_update_build_number')),
+                              validator: (v) {
+                                final n = int.tryParse(v ?? '');
+                                return (n == null || n <= 0) ? dialogContext.tr('publish_update_build_number_required') : null;
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: notesController,
+                              maxLines: 3,
+                              decoration: InputDecoration(labelText: dialogContext.tr('publish_update_notes')),
+                            ),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: mandatory,
+                              onChanged: (v) => setDialogState(() => mandatory = v),
+                              title: Text(dialogContext.tr('publish_update_mandatory')),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextButton(
+                                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                                    child: Text(dialogContext.tr('cancel')),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: FilledButton(
+                                    onPressed: () {
+                                      if (pickedApk == null) {
+                                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                          SnackBar(content: Text(dialogContext.tr('publish_update_pick_apk'))),
+                                        );
+                                        return;
+                                      }
+                                      if (!(formKey.currentState?.validate() ?? false)) return;
+                                      Navigator.of(dialogContext).pop(true);
+                                    },
+                                    child: Text(dialogContext.tr('publish_update_confirm')),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true || pickedApk?.path == null || !mounted) return;
+
+    setState(() => _publishingUpdate = true);
+    try {
+      await context.read<CommunityProvider>().publishAppUpdate(
+            localApkPath: pickedApk!.path!,
+            version: versionController.text.trim(),
+            buildNumber: int.parse(buildNumberController.text.trim()),
+            notes: notesController.text.trim(),
+            mandatory: mandatory,
+          );
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(context.trOnce('publish_update_success'))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _publishingUpdate = false);
+    }
+  }
+
+  /// Strictly developer-only (see the `if (auth.isDeveloper)` gate around
+  /// its ListTile below — support/performer accounts don't get this).
+  /// Same frosted-glass dialog style as [_editBio] / [_changePassword].
+  Future<void> _sendNotification() async {
+    if (_sendingNotification) return;
+    final formKey = GlobalKey<FormState>();
+    final titleController = TextEditingController();
+    final bodyController = TextEditingController();
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.32),
+      builder: (dialogContext) {
+        final dTheme = Theme.of(dialogContext);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 36),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      dTheme.colorScheme.surface.withOpacity(0.72),
+                      dTheme.colorScheme.surface.withOpacity(0.5),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                ),
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: dTheme.colorScheme.secondary.withOpacity(0.14),
+                        ),
+                        child: Icon(Icons.campaign_outlined, color: dTheme.colorScheme.secondary, size: 22),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        dialogContext.tr('send_notification'),
+                        textAlign: TextAlign.center,
+                        style: dTheme.textTheme.titleMedium?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 22),
+                      TextFormField(
+                        controller: titleController,
+                        autofocus: true,
+                        style: dTheme.textTheme.bodyMedium,
+                        decoration: InputDecoration(
+                          labelText: dialogContext.tr('notification_title_label'),
+                          isDense: true,
+                          filled: true,
+                          fillColor: dTheme.colorScheme.primary.withOpacity(0.05),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.secondary, width: 1.4),
+                          ),
+                        ),
+                        validator: (v) =>
+                            (v == null || v.trim().isEmpty) ? dialogContext.tr('notification_title_required') : null,
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: bodyController,
+                        maxLines: 3,
+                        style: dTheme.textTheme.bodyMedium,
+                        decoration: InputDecoration(
+                          labelText: dialogContext.tr('notification_body_label'),
+                          filled: true,
+                          fillColor: dTheme.colorScheme.primary.withOpacity(0.05),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.primary.withOpacity(0.12)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: dTheme.colorScheme.secondary, width: 1.4),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              style: TextButton.styleFrom(
+                                foregroundColor: dTheme.colorScheme.primary.withOpacity(0.7),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                              onPressed: () => Navigator.of(dialogContext).pop(false),
+                              child: Text(dialogContext.tr('cancel')),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: dTheme.colorScheme.secondary,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                              onPressed: () {
+                                if (formKey.currentState!.validate()) {
+                                  Navigator.of(dialogContext).pop(true);
+                                }
+                              },
+                              child: Text(dialogContext.tr('send')),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result != true || !mounted) return;
+
+    setState(() => _sendingNotification = true);
+    try {
+      await context.read<NotificationsProvider>().send(
+            title: titleController.text,
+            body: bodyController.text,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(context.trOnce('notification_sent'))));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) setState(() => _sendingNotification = false);
+    }
+  }
+
   Future<void> _pickAndUploadAvatar() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.image);
     final picked = result?.files.single;
@@ -687,7 +1074,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final picked = result?.files.single;
     if (picked?.path == null) return;
 
-    if ((picked!.size) > _maxAvatarBytes) {
+    if ((picked!.size) > _maxBannerBytes) {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(_trStatic(context, 'banner_too_large'))));
@@ -966,6 +1353,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: Text(context.tr('select_tags_subtitle'), style: const TextStyle(fontSize: 12)),
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FeaturedTagsScreen())),
             ),
+            // Same reach as [select_tags] above — developer AND support
+            // accounts (auth.hasDeveloperRights), so any of them can push
+            // a build without needing the other release-publishing tools.
+            ListTile(
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: _publishingUpdate
+                    ? const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.upload_file, color: Colors.white),
+              ),
+              title: Text(context.tr('publish_update'), style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(context.tr('publish_update_subtitle'), style: const TextStyle(fontSize: 12)),
+              onTap: _publishingUpdate ? null : _publishUpdate,
+            ),
             // Strictly developer-only — unlike [select_tags] above, support
             // accounts do NOT get this one (see auth.isDeveloper, not
             // auth.hasDeveloperRights).
@@ -989,7 +1398,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: Text(context.tr('sync_roles_subtitle'), style: const TextStyle(fontSize: 12)),
                 onTap: _syncingRoles ? null : _syncRoles,
               ),
+            // Strictly developer-only — same as [sync_roles] above (see
+            // auth.isDeveloper, not auth.hasDeveloperRights).
+            if (auth.isDeveloper)
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.secondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _sendingNotification
+                      ? const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.campaign_outlined, color: Colors.white),
+                ),
+                title: Text(context.tr('send_notification'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Text(context.tr('send_notification_subtitle'), style: const TextStyle(fontSize: 12)),
+                onTap: _sendingNotification ? null : _sendNotification,
+              ),
           ],
+          const Divider(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(context.tr('about'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          ),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: Text(context.tr('app_version')),
+            subtitle: Text(
+              _packageInfo == null ? '' : '${_packageInfo!.version} (${_packageInfo!.buildNumber})',
+            ),
+          ),
+          ListTile(
+            leading: _checkingForUpdates
+                ? const SizedBox(width: 24, height: 24, child: Padding(
+                    padding: EdgeInsets.all(2),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ))
+                : const Icon(Icons.system_update_alt),
+            title: Text(context.tr('check_for_updates')),
+            subtitle: _checkingForUpdates ? Text(context.tr('checking_for_updates')) : null,
+            onTap: _checkingForUpdates ? null : _checkForUpdates,
+          ),
           const Divider(height: 24),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),

@@ -2,6 +2,7 @@ import 'dart:math';
 import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/user.dart';
+import '../models/app_notification.dart';
 import 'api_service.dart';
 
 /// Fake backend so the UI can be built and demoed with zero server setup.
@@ -511,6 +512,24 @@ class MockApiService implements ApiService {
     return 0;
   }
 
+  /// Mock has nowhere real to "publish" a build to — just checks
+  /// permissions and pretends, like the rest of this class does for
+  /// anything that would otherwise touch real storage.
+  @override
+  Future<void> publishAppUpdate({
+    required String localApkPath,
+    required String version,
+    required int buildNumber,
+    required String notes,
+    required bool mandatory,
+  }) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !(current.isDeveloper || current.isSupport)) {
+      throw ApiException('Only developer or support accounts can publish app updates');
+    }
+  }
+
   @override
   Future<AppUser> setLikesPrivacy(String privacy) async {
     await Future.delayed(const Duration(milliseconds: 150));
@@ -637,6 +656,48 @@ class MockApiService implements ApiService {
     // file path so the picked image can still be previewed on-device.
     _artistAvatars[artist] = localImagePath;
     return localImagePath;
+  }
+
+  final List<AppNotification> _notifications = [];
+  int _notificationCounter = 0;
+
+  @override
+  Future<List<AppNotification>> fetchNotifications() async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    return List.unmodifiable(_notifications.reversed);
+  }
+
+  @override
+  Future<AppNotification> sendNotification({required String title, required String body}) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can send notifications');
+    }
+    final trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) {
+      throw ApiException('Notification title is required');
+    }
+    final notification = AppNotification(
+      id: '${_notificationCounter++}',
+      title: trimmedTitle,
+      body: body.trim(),
+      createdAt: DateTime.now(),
+    );
+    _notifications.add(notification);
+    return notification;
+  }
+
+  @override
+  Future<void> deleteNotification(String id) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    final current = _currentMockUser;
+    if (current == null || !current.isDeveloper) {
+      throw ApiException('Only developer accounts can delete notifications');
+    }
+    final removed = _notifications.any((n) => n.id == id);
+    if (!removed) throw ApiException('Notification not found');
+    _notifications.removeWhere((n) => n.id == id);
   }
 
   @override

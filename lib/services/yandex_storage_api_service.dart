@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../models/playlist.dart';
 import '../models/track.dart';
 import '../models/user.dart';
+import '../models/app_notification.dart';
 import 'api_service.dart';
 import 'yandex_sigv4.dart';
 
@@ -93,6 +94,7 @@ class YandexStorageApiService implements ApiService {
   static const _favoritesKey = 'db/favorites.json';
   static const _favoriteUsersKey = 'db/favorite_users.json';
   static const _featuredTagsKey = 'db/featured_tags.json';
+  static const _notificationsKey = 'db/notifications.json';
   static const _artistAvatarsKey = 'db/artist_avatars.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
@@ -102,6 +104,7 @@ class YandexStorageApiService implements ApiService {
   static const _lyricsPrefix = 'media/lyrics/';
   static const _maxRetries = 8;
   static const _maxAvatarBytes = 5 * 1024 * 1024;
+  static const _maxBannerBytes = 10 * 1024 * 1024;
   static const _maxCoverBytes = 5 * 1024 * 1024;
   // Any image format is accepted for playlist covers except GIF (avoids
   // animated covers rendering oddly in fixed-size artwork slots).
@@ -531,18 +534,19 @@ class YandexStorageApiService implements ApiService {
   }
 
   /// Uploads a custom profile banner for the currently logged-in user.
-  /// Same flow as [uploadAvatar]: size-checked locally, uploaded to
-  /// `media/banners/` (public-read), then the user's row is updated so
-  /// the new banner sticks across sessions/devices, with best-effort
-  /// cleanup of the old banner file.
+  /// Same flow as [uploadAvatar]: size-checked locally (up to 10 MB —
+  /// banners are wider/heavier than avatars so they get a bigger budget),
+  /// uploaded to `media/banners/` (public-read), then the user's row is
+  /// updated so the new banner sticks across sessions/devices, with
+  /// best-effort cleanup of the old banner file.
   @override
   Future<AppUser> uploadBanner(String localImagePath) async {
     final user = await _currentUserRow();
 
     final file = File(localImagePath);
     final sizeBytes = await file.length();
-    if (sizeBytes > _maxAvatarBytes) {
-      throw ApiException('Image is too large — max 5 MB');
+    if (sizeBytes > _maxBannerBytes) {
+      throw ApiException('Image is too large — max 10 MB');
     }
 
     final oldBannerUrl = user['banner_url'] as String?;
@@ -911,6 +915,57 @@ class YandexStorageApiService implements ApiService {
     });
   }
 
+  /// Developer/support-only. Reads [localApkPath] fully into memory and
+  /// PUTs it to the fixed `app/latest.apk` key (public-read, so
+  /// [UpdateService] can download it with a plain GET), then — only once
+  /// that succeeds — overwrites `app/update.json` with the new manifest.
+  /// That ordering matters: if it were reversed, a device could read a
+  /// manifest pointing at a build number whose APK bytes aren't there yet.
+  @override
+  Future<void> publishAppUpdate({
+    required String localApkPath,
+    required String version,
+    required int buildNumber,
+    required String notes,
+    required bool mandatory,
+  }) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true && user['is_support'] != true) {
+      throw ApiException('Only developer or support accounts can publish app updates');
+    }
+    if (version.trim().isEmpty) {
+      throw ApiException('Version is required');
+    }
+    if (buildNumber <= 0) {
+      throw ApiException('Build number must be a positive integer');
+    }
+
+    const apkKey = 'app/latest.apk';
+    const manifestKey = 'app/update.json';
+
+    final bytes = await File(localApkPath).readAsBytes();
+    await _putObject(
+      apkKey,
+      bytes,
+      contentType: 'application/vnd.android.package-archive',
+      publicRead: true,
+    );
+
+    final manifest = {
+      'buildNumber': buildNumber,
+      'version': version.trim(),
+      'apkUrl': 'https://${config.endpointHost}/${config.bucket}/$apkKey',
+      'notes': notes,
+      'mandatory': mandatory,
+    };
+    await _putObject(
+      manifestKey,
+      utf8.encode(jsonEncode(manifest)),
+      contentType: 'application/json',
+      publicRead: true,
+    );
+  }
+
   Future<String> _uploadMediaFile(String localPath, String prefix) async {
     final bytes = await File(localPath).readAsBytes();
     final ext = localPath.contains('.') ? localPath.substring(localPath.lastIndexOf('.')) : '';
@@ -1272,6 +1327,63 @@ class YandexStorageApiService implements ApiService {
       }
     }
     throw ApiException('Too many concurrent updates to featured tags, please try again');
+  }
+
+  // --- Notifications ----------------------------------------------------
+  AppNotification _notificationFromRow(Map<String, dynamic> row) => AppNotification.fromJson(row);
+
+  @override
+  Future<List<AppNotification>> fetchNotifications() async {
+    await _currentUserRow();
+    final data = await _readCollection(_notificationsKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    items.sort((a, b) => ((b['created_at'] as num?) ?? 0).compareTo((a['created_at'] as num?) ?? 0));
+    return items.map(_notificationFromRow).toList();
+  }
+
+  /// Strictly developer-only — unlike most admin actions in this file,
+  /// support accounts do NOT get this one (checks `is_developer` alone,
+  /// not also `is_support`).
+  @override
+  Future<AppNotification> sendNotification({required String title, required String body}) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only developer accounts can send notifications');
+    }
+    final trimmedTitle = title.trim();
+    final trimmedBody = body.trim();
+    if (trimmedTitle.isEmpty) {
+      throw ApiException('Notification title is required');
+    }
+
+    final row = await _withCollection(_notificationsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final row = {
+        'id': _randomId(),
+        'title': trimmedTitle,
+        'body': trimmedBody,
+        'created_at': DateTime.now().millisecondsSinceEpoch / 1000,
+      };
+      items.add(row);
+      return row;
+    });
+    return _notificationFromRow(row);
+  }
+
+  /// Strictly developer-only — same restriction as [sendNotification].
+  @override
+  Future<void> deleteNotification(String id) async {
+    final user = await _currentUserRow();
+    if (user['is_developer'] != true) {
+      throw ApiException('Only developer accounts can delete notifications');
+    }
+    await _withCollection(_notificationsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final idx = items.indexWhere((r) => (r as Map)['id'] == id);
+      if (idx == -1) throw ApiException('Notification not found');
+      items.removeAt(idx);
+      return null;
+    });
   }
 
   // --- Artists --------------------------------------------------------

@@ -85,7 +85,7 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildArtistCard(BuildContext context, LibraryProvider library, PlayerProvider player, String artist) {
+  Widget _buildArtistCard(BuildContext context, LibraryProvider library, PlayerProvider player, String? currentTrackId, String artist) {
     final artistTracks = library.tracks.where((t) => t.artist == artist).toList();
     final preview = artistTracks.take(3).toList();
     return ArtistResultCard(
@@ -93,7 +93,7 @@ class _SearchScreenState extends State<SearchScreen> {
       avatarUrl: library.avatarForArtist(artist),
       trackCount: artistTracks.length,
       previewTracks: preview,
-      playingTrackId: player.currentTrack?.id,
+      playingTrackId: currentTrackId,
       onListen: () {
         if (artistTracks.isEmpty) return;
         final index = Random().nextInt(artistTracks.length);
@@ -116,7 +116,7 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildResults(BuildContext context, LibraryProvider library, PlayerProvider player) {
+  Widget _buildResults(BuildContext context, LibraryProvider library, PlayerProvider player, String? currentTrackId) {
     final artists = library.searchArtists(_controller.text);
     final tracks = library.searchResults;
 
@@ -125,14 +125,14 @@ class _SearchScreenState extends State<SearchScreen> {
       children: [
         if (artists.isNotEmpty) ...[
           SectionHeader(title: context.tr('artists'), topSpacing: 4),
-          for (final artist in artists) _buildArtistCard(context, library, player, artist),
+          for (final artist in artists) _buildArtistCard(context, library, player, currentTrackId, artist),
         ],
         if (tracks.isNotEmpty) ...[
           SectionHeader(title: context.tr('tracks'), topSpacing: artists.isEmpty ? 4 : 12),
           for (var i = 0; i < tracks.length; i++)
             TrackListTile(
               track: tracks[i],
-              isPlaying: player.currentTrack?.id == tracks[i].id,
+              isPlaying: currentTrackId == tracks[i].id,
               onTap: () {
                 context.read<LibraryProvider>().commitSearchHistory(_controller.text);
                 player.playQueue(tracks, startIndex: i);
@@ -154,7 +154,8 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
-    final player = context.watch<PlayerProvider>();
+    final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
+    final player = context.read<PlayerProvider>();
 
     return Scaffold(
       appBar: AppBar(
@@ -213,7 +214,7 @@ class _SearchScreenState extends State<SearchScreen> {
                           style: TextStyle(color: Theme.of(context).hintColor),
                         ),
                       )
-                    : _buildResults(context, library, player),
+                    : _buildResults(context, library, player, currentTrackId),
           ),
         ],
       ),

@@ -229,7 +229,8 @@ class _ArtistTracksScreenState extends State<ArtistTracksScreen>
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
-    final player = context.watch<PlayerProvider>();
+    final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
+    final player = context.read<PlayerProvider>();
     final auth = context.watch<AuthProvider>();
     final tracks = library.tracks.where((t) => t.artist == widget.artist).toList();
     final cover = tracks.isNotEmpty ? tracks.first.coverUrl : '';
@@ -366,7 +367,7 @@ class _ArtistTracksScreenState extends State<ArtistTracksScreen>
                         final track = tracks[i];
                         return TrackListTile(
                           track: track,
-                          isPlaying: player.currentTrack?.id == track.id,
+                          isPlaying: currentTrackId == track.id,
                           onTap: () => player.playQueue(tracks, startIndex: i),
                           trailing: IconButton(
                             icon: const Icon(Icons.more_vert),

@@ -77,6 +77,12 @@ class AppColors {
   static const bubblesBg = Color(0xFFE3F6F9);
   static const bubblesSurface = Color(0xFFD3EFF4);
   static const bubblesCard = Color(0xFFC2E9F0);
+
+  // AMOLED theme — true black everywhere (battery-saving on OLED
+  // screens), cards are the same near-black as the background and are
+  // defined only by a hairline white border instead of a lighter fill.
+  static const amoledSurface = Color(0xFF000000);
+  static const amoledCard = Color(0xFF0A0A0A);
 }
 
 /// All selectable app themes. Each has its own background/card/accent
@@ -84,6 +90,7 @@ class AppColors {
 /// switch layered on top.
 enum AppThemeOption {
   dark,
+  amoled,
   light,
   peach,
   sky,
@@ -104,6 +111,8 @@ extension AppThemeOptionX on AppThemeOption {
     switch (this) {
       case AppThemeOption.dark:
         return 'dark';
+      case AppThemeOption.amoled:
+        return 'amoled';
       case AppThemeOption.light:
         return 'light';
       case AppThemeOption.peach:
@@ -144,6 +153,7 @@ extension AppThemeOptionX on AppThemeOption {
   bool get isDark {
     switch (this) {
       case AppThemeOption.dark:
+      case AppThemeOption.amoled:
       case AppThemeOption.purple:
       case AppThemeOption.sky:
       case AppThemeOption.ruby:
@@ -166,6 +176,8 @@ extension AppThemeOptionX on AppThemeOption {
     switch (this) {
       case AppThemeOption.dark:
         return const Color(0xFF1E1E1E);
+      case AppThemeOption.amoled:
+        return Colors.black;
       case AppThemeOption.light:
         return const Color(0xFFECECEE);
       case AppThemeOption.peach:
@@ -197,6 +209,8 @@ extension AppThemeOptionX on AppThemeOption {
     switch (this) {
       case AppThemeOption.dark:
         return Icons.dark_mode;
+      case AppThemeOption.amoled:
+        return Icons.brightness_1;
       case AppThemeOption.light:
         return Icons.light_mode;
       case AppThemeOption.peach:
@@ -228,6 +242,8 @@ extension AppThemeOptionX on AppThemeOption {
     switch (this) {
       case AppThemeOption.dark:
         return AppTheme.dark;
+      case AppThemeOption.amoled:
+        return AppTheme.amoled;
       case AppThemeOption.light:
         return AppTheme.light;
       case AppThemeOption.peach:
@@ -255,6 +271,13 @@ extension AppThemeOptionX on AppThemeOption {
     }
   }
 }
+
+/// Readable foreground for text/icons painted directly on a solid
+/// [background] fill (badges, filled pill buttons, tab indicators). Most
+/// theme accents are saturated enough that hardcoding white works fine,
+/// but the AMOLED theme's accent is pure white, so those spots need to
+/// flip to black instead — this keeps that decision in one place.
+Color onColor(Color background) => background.computeLuminance() > 0.55 ? Colors.black : Colors.white;
 
 class AppTheme {
   static ThemeData get dark {
@@ -309,6 +332,87 @@ class AppTheme {
         fillColor: AppColors.darkCard,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
         hintStyle: const TextStyle(color: Colors.white38),
+      ),
+      useMaterial3: true,
+    );
+  }
+
+  /// AMOLED — pure black everywhere, including cards (which sit at the
+  /// same near-black as the background and are only set apart by a thin
+  /// white-ish border), for maximum battery savings on OLED screens.
+  /// Unlike the other themes, there's no separate accent color here —
+  /// white is both the primary and secondary color, so play buttons,
+  /// active states, and the progress bar are all white instead of red.
+  static ThemeData get amoled {
+    const bg = Colors.black;
+    return ThemeData(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: bg,
+      primaryColor: Colors.white,
+      colorScheme: const ColorScheme.dark(
+        primary: Colors.white,
+        secondary: Colors.white,
+        surface: AppColors.amoledSurface,
+      ),
+      cardColor: AppColors.amoledCard,
+      dividerColor: Colors.white24,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: bg,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        titleTextStyle: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+      ),
+      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+        backgroundColor: Colors.black,
+        selectedItemColor: Colors.white,
+        unselectedItemColor: Colors.white38,
+        type: BottomNavigationBarType.fixed,
+      ),
+      textTheme: const TextTheme(
+        bodyLarge: TextStyle(color: Colors.white),
+        bodyMedium: TextStyle(color: Colors.white),
+        titleMedium: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+      ).apply(bodyColor: Colors.white, displayColor: Colors.white),
+      iconTheme: const IconThemeData(color: Colors.white),
+      sliderTheme: SliderThemeData(
+        activeTrackColor: Colors.white,
+        inactiveTrackColor: Colors.white24,
+        thumbColor: Colors.white,
+        overlayColor: Colors.white24,
+        trackHeight: 3,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: AppColors.amoledCard,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.white24),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.white24),
+        ),
+        hintStyle: const TextStyle(color: Colors.white38),
+      ),
+      // Cards would otherwise be visually indistinguishable from the
+      // pure-black background, so give them a hairline white border to
+      // read as "inserts" instead of relying on a fill-color difference.
+      cardTheme: CardThemeData(
+        color: AppColors.amoledCard,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: Colors.white24),
+        ),
       ),
       useMaterial3: true,
     );

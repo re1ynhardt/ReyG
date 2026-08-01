@@ -23,9 +23,12 @@ class BannerCropScreen extends StatefulWidget {
   final String imagePath;
 
   /// Matches how the banner is displayed on the profile screen (see
-  /// `_UserBannerImage.build` in `user_profile_screen.dart`), so what the
-  /// user frames here is exactly what other people will see.
-  static const double aspectRatio = 3;
+  /// `_ProfileHero` in `user_profile_screen.dart`, which wraps its whole
+  /// header in an `AspectRatio` using this same constant), so what the
+  /// user frames here is exactly what other people will see. The header
+  /// is now a tall portrait hero (photo behind the centered avatar/name/
+  /// stats) rather than the old thin 3:1 strip above them, hence < 1.
+  static const double aspectRatio = 0.85;
 
   @override
   State<BannerCropScreen> createState() => _BannerCropScreenState();

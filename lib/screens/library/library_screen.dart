@@ -206,7 +206,9 @@ class _SimpleTrackListScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final player = context.watch<PlayerProvider>();
+    final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
+    final hasTrack = context.select<PlayerProvider, bool>((p) => p.hasTrack);
+    final player = context.read<PlayerProvider>();
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: tracks.isEmpty
@@ -218,7 +220,7 @@ class _SimpleTrackListScreen extends StatelessWidget {
                 final track = tracks[i];
                 return TrackListTile(
                   track: track,
-                  isPlaying: player.currentTrack?.id == track.id,
+                  isPlaying: currentTrackId == track.id,
                   onTap: () => player.playQueue(List.from(tracks), startIndex: i),
                   trailing: IconButton(
                     icon: const Icon(Icons.more_vert),
@@ -231,7 +233,7 @@ class _SimpleTrackListScreen extends StatelessWidget {
                 );
               },
             ),
-      bottomNavigationBar: player.hasTrack
+      bottomNavigationBar: hasTrack
           ? Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: const MiniPlayer(),

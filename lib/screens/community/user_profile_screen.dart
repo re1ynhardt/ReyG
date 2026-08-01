@@ -11,11 +11,13 @@ import '../../providers/auth_provider.dart';
 import '../../providers/community_provider.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/player_provider.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/artist_avatar.dart';
 import '../../widgets/cached_cover_image.dart';
 import '../../widgets/track_list_tile.dart';
 import '../library/playlist_picker_sheet.dart';
 import '../player/mini_player.dart';
+import '../settings/banner_crop_screen.dart';
 
 /// Read-only profile for another Community user: their liked (favorited)
 /// tracks and their playlists (both already tied to the account in Yandex
@@ -85,7 +87,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
 
   @override
   Widget build(BuildContext context) {
-    final player = context.watch<PlayerProvider>();
+    final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
+    final hasTrack = context.select<PlayerProvider, bool>((p) => p.hasTrack);
+    final player = context.read<PlayerProvider>();
     final auth = context.watch<AuthProvider>();
     final community = context.watch<CommunityProvider>();
     final library = context.watch<LibraryProvider>();
@@ -104,14 +108,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
     final uploadedTracks = library.tracks.where((t) => t.uploaderId == user.id).toList();
 
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text(user.displayName),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.white,
         actions: [
           if (!isSelf)
             IconButton(
               icon: Icon(
                 isFavorite ? Icons.star : Icons.star_border,
-                color: isFavorite ? Colors.amber : null,
+                color: isFavorite ? Colors.amber : Colors.white,
               ),
               tooltip: isFavorite
                   ? context.tr('remove_user_from_favorites')
@@ -128,73 +135,35 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
       ),
       body: Column(
         children: [
-          if (user.bannerUrl.isNotEmpty)
-            _ProfileHeaderWithBanner(user: user)
-          else
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  ArtistAvatar(imageUrl: user.avatarUrl, radius: 36),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user.displayName,
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                        if (user.isDeveloper || user.isSupport || user.isPerformer) ...[
-                          const SizedBox(height: 4),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
-                                size: 14,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                user.isDeveloper
-                                    ? context.tr('developer_account')
-                                    : user.isSupport
-                                        ? context.tr('support_account')
-                                        : context.tr('performer_account'),
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (user.bio.isNotEmpty) _UserBioWidget(bio: user.bio),
-          TabBar(
-            controller: _tabController,
-            tabs: [
-              Tab(icon: const Icon(Icons.library_music_outlined), text: context.tr('profile_tab_library')),
-              Tab(icon: const Icon(Icons.mic_none_rounded), text: context.tr('profile_tab_artist')),
-            ],
+          FutureBuilder<List<Playlist>>(
+            future: _playlistsFuture,
+            builder: (context, playlistsSnapshot) {
+              return FutureBuilder<List<Track>>(
+                future: _tracksFuture,
+                builder: (context, tracksSnapshot) {
+                  return _ProfileHero(
+                    user: user,
+                    uploadedTracksCount: uploadedTracks.length,
+                    playlistsCount: playlistsSnapshot.data?.length ?? 0,
+                    likedTracksCount: tracksSnapshot.data?.length ?? 0,
+                  );
+                },
+              );
+            },
           ),
+          _ProfileSegmentedTabBar(controller: _tabController),
           Expanded(
             child: TabBarView(
               controller: _tabController,
               children: [
                 _buildLibraryTab(context),
-                _buildArtistTab(context, uploadedTracks, player),
+                _buildArtistTab(context, uploadedTracks, player, currentTrackId),
               ],
             ),
           ),
         ],
       ),
-      bottomNavigationBar: player.hasTrack
+      bottomNavigationBar: hasTrack
           ? const Padding(padding: EdgeInsets.only(bottom: 6), child: MiniPlayer())
           : null,
     );
@@ -233,7 +202,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
                         );
                       }
                       final tracks = snapshot.data ?? const [];
-                      return _FavoritesGlassCard(
+                      return _FavoritesSection(
                         tracks: tracks,
                         onOpen: tracks.isEmpty
                             ? null
@@ -254,7 +223,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
                         );
                       }
                       final playlists = snapshot.data ?? const [];
-                      return _PlaylistsGlassCard(playlists: playlists);
+                      return _PlaylistsSection(playlists: playlists);
                     },
                   ),
                 ],
@@ -271,7 +240,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
   /// it reads live from [LibraryProvider] rather than a one-shot fetch —
   /// it updates immediately if the account uploads/deletes a track while
   /// this profile is open.
-  Widget _buildArtistTab(BuildContext context, List<Track> tracks, PlayerProvider player) {
+  Widget _buildArtistTab(BuildContext context, List<Track> tracks, PlayerProvider player, String? currentTrackId) {
     if (tracks.isEmpty) {
       return Center(
         child: Text(context.tr('user_no_tracks'), style: TextStyle(color: Theme.of(context).hintColor)),
@@ -282,7 +251,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
       itemCount: tracks.length,
       itemBuilder: (context, i) => TrackListTile(
         track: tracks[i],
-        isPlaying: player.currentTrack?.id == tracks[i].id,
+        isPlaying: currentTrackId == tracks[i].id,
         onTap: () => player.playQueue(tracks, startIndex: i),
         trailing: IconButton(
           icon: const Icon(Icons.more_vert),
@@ -310,69 +279,154 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
 /// `Container.margin` and `Padding.padding` assert non-negative in
 /// Flutter, so an overlap like this can't be done by shifting insets
 /// into negative territory.
-class _ProfileHeaderWithBanner extends StatelessWidget {
-  const _ProfileHeaderWithBanner({required this.user});
+/// Full-bleed hero header shown at the top of a Community profile: banner
+/// (or a themed gradient fallback when the account has no `bannerUrl`) as
+/// a backdrop, darkened so the app bar's icons stay legible, with the
+/// avatar, display name, badge, bio and Tracks/Playlists/Favorites stats
+/// all centered on top of it — mirrors a typical social-profile header
+/// instead of the old left-aligned row.
+class _ProfileHero extends StatelessWidget {
+  const _ProfileHero({
+    required this.user,
+    required this.uploadedTracksCount,
+    required this.playlistsCount,
+    required this.likedTracksCount,
+  });
 
   final AppUser user;
+  final int uploadedTracksCount;
+  final int playlistsCount;
+  final int likedTracksCount;
 
-  static const _avatarRadius = 36.0;
+  static const _avatarRadius = 52.0;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.secondary;
+    final topPadding = MediaQuery.of(context).padding.top;
+
+    return AspectRatio(
+      // Fixed aspect ratio, matching [BannerCropScreen.aspectRatio] exactly,
+      // so the frame the user cropped in Settings is exactly what's shown
+      // here — no extra `BoxFit.cover` re-cropping or distortion from a
+      // mismatched container shape.
+      aspectRatio: BannerCropScreen.aspectRatio,
+      child: ClipRect(child: _buildStack(context, theme, accent, topPadding)),
+    );
+  }
+
+  Widget _buildStack(BuildContext context, ThemeData theme, Color accent, double topPadding) {
     return Stack(
-      clipBehavior: Clip.none,
+      fit: StackFit.expand,
       children: [
-        Column(
-          children: [
-            _UserBannerImage(url: user.bannerUrl),
-            // Reserves room below the banner for the bottom half of the
-            // overlapping avatar (plus a little breathing room), so later
-            // widgets in the list don't start right underneath it.
-            const SizedBox(height: _avatarRadius + 12),
-          ],
+        // Backdrop: the user's banner photo, or a themed gradient when
+        // they haven't set one.
+        Positioned.fill(
+          child: user.bannerUrl.isNotEmpty
+              ? CachedNetworkImage(
+                  imageUrl: user.bannerUrl,
+                  fit: BoxFit.cover,
+                  errorWidget: (context, _, __) => _HeroGradientFallback(accent: accent),
+                  placeholder: (context, _) => _HeroGradientFallback(accent: accent),
+                )
+              : _HeroGradientFallback(accent: accent),
         ),
-        Positioned(
-          left: 16,
-          right: 16,
-          bottom: 0,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+        // Scrim so the app bar icons and centered text stay readable over
+        // any photo.
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withOpacity(0.45),
+                  Colors.black.withOpacity(0.35),
+                  Colors.black.withOpacity(0.75),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(20, topPadding + kToolbarHeight + 4, 20, 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              ArtistAvatar(imageUrl: user.avatarUrl, radius: _avatarRadius),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      user.displayName,
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    if (user.isDeveloper || user.isSupport || user.isPerformer) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
-                            size: 14,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            user.isDeveloper
-                                ? context.tr('developer_account')
-                                : user.isSupport
-                                    ? context.tr('support_account')
-                                    : context.tr('performer_account'),
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    ],
+              // Glowing gradient ring around the avatar.
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [accent, theme.colorScheme.primary],
+                  ),
+                  boxShadow: [
+                    BoxShadow(color: accent.withOpacity(0.55), blurRadius: 24, spreadRadius: 1),
                   ],
                 ),
+                child: ArtistAvatar(imageUrl: user.avatarUrl, radius: _avatarRadius),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      user.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  if (user.isDeveloper || user.isSupport || user.isPerformer) ...[
+                    const SizedBox(width: 6),
+                    Icon(
+                      (user.isDeveloper || user.isSupport) ? Icons.verified : Icons.mic,
+                      size: 20,
+                      color: accent,
+                    ),
+                  ],
+                ],
+              ),
+              if (user.isDeveloper || user.isSupport || user.isPerformer)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    user.isDeveloper
+                        ? context.tr('developer_account')
+                        : user.isSupport
+                            ? context.tr('support_account')
+                            : context.tr('performer_account'),
+                    style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.75)),
+                  ),
+                ),
+              if (user.bio.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    user.bio,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.65)),
+                  ),
+                ),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _HeroStat(value: uploadedTracksCount, label: context.tr('stat_tracks')),
+                  _HeroStatDivider(),
+                  _HeroStat(value: playlistsCount, label: context.tr('playlists')),
+                  _HeroStatDivider(),
+                  _HeroStat(value: likedTracksCount, label: context.tr('favorites')),
+                ],
               ),
             ],
           ),
@@ -382,117 +436,151 @@ class _ProfileHeaderWithBanner extends StatelessWidget {
   }
 }
 
-/// Wide banner image shown at the top of a profile, above the avatar
-/// row. Only rendered when the user has a `bannerUrl` set. Fades into
-/// the scaffold background at the bottom edge, right under the name
-/// row (see [_UserBannerImage]).
-class _UserBannerImage extends StatelessWidget {
-  const _UserBannerImage({required this.url});
+class _HeroGradientFallback extends StatelessWidget {
+  const _HeroGradientFallback({required this.accent});
 
-  final String url;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    final bg = Theme.of(context).scaffoldBackgroundColor;
-    return AspectRatio(
-      aspectRatio: 3,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          CachedNetworkImage(
-            imageUrl: url,
-            fit: BoxFit.cover,
-            errorWidget: (context, _, __) => Container(color: Theme.of(context).cardColor),
-            placeholder: (context, _) => Container(color: Theme.of(context).cardColor),
-          ),
-          // Fades the bottom of the banner into the scaffold background so
-          // it blends smoothly into the avatar/name row right below it,
-          // instead of ending in a hard edge.
-          IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  stops: const [0.0, 0.6],
-                  colors: [bg, bg.withOpacity(0)],
-                ),
-              ),
-            ),
-          ),
-        ],
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [accent.withOpacity(0.55), theme.colorScheme.primary.withOpacity(0.55), Colors.black],
+        ),
       ),
     );
   }
 }
 
-class _UserBioWidget extends StatelessWidget {
-  const _UserBioWidget({required this.bio});
+/// One "1.2K Tracks"-style stat in the hero header. Compacts large counts
+/// (e.g. 1234 -> "1.2K") the way social-profile stat rows usually do.
+class _HeroStat extends StatelessWidget {
+  const _HeroStat({required this.value, required this.label});
 
-  final String bio;
+  final int value;
+  final String label;
+
+  static String _compact(int n) {
+    if (n < 1000) return '$n';
+    if (n < 1000000) {
+      final k = n / 1000;
+      return '${k.toStringAsFixed(k < 10 ? 1 : 0)}K';
+    }
+    final m = n / 1000000;
+    return '${m.toStringAsFixed(m < 10 ? 1 : 0)}M';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          _compact(value),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+        const SizedBox(height: 2),
+        Text(label, style: TextStyle(fontSize: 12.5, color: Colors.white.withOpacity(0.6))),
+      ],
+    );
+  }
+}
+
+class _HeroStatDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 28,
+      margin: const EdgeInsets.symmetric(horizontal: 22),
+      color: Colors.white.withOpacity(0.18),
+    );
+  }
+}
+
+/// Pill-shaped "Library / Artist" switcher, built from scratch instead of
+/// a Material [TabBar]: a rounded translucent track with a solid accent
+/// pill that slides behind whichever label is selected (following
+/// [controller]'s animation 1:1 during swipes, not just on settle). Avoids
+/// [TabBar] entirely so there's no default bottom divider line under it.
+class _ProfileSegmentedTabBar extends StatelessWidget {
+  const _ProfileSegmentedTabBar({required this.controller});
+
+  final TabController controller;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // Unlike the neutral frosted-glass cards below (favorites/playlists),
-    // this one leans on the theme's accent color so it reads as the
-    // "voice" of the profile rather than another data card in the list.
     final accent = theme.colorScheme.secondary;
+    final labels = [context.tr('profile_tab_library'), context.tr('profile_tab_artist')];
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
       child: Container(
-        width: double.infinity,
-        clipBehavior: Clip.antiAlias,
+        height: 48,
+        padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [accent.withOpacity(0.20), accent.withOpacity(0.05)],
-          ),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: accent.withOpacity(0.4), width: 1.2),
+          color: theme.cardColor.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(26),
         ),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -8,
-              top: -14,
-              child: Icon(Icons.format_quote_rounded, size: 72, color: accent.withOpacity(0.14)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.format_quote_rounded, size: 15, color: accent),
-                      const SizedBox(width: 6),
-                      Text(
-                        context.tr('bio_title').toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.6,
+        child: AnimatedBuilder(
+          animation: controller.animation ?? controller,
+          builder: (context, _) {
+            final t = (controller.animation?.value ?? controller.index.toDouble()).clamp(0.0, 1.0);
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final segmentWidth = constraints.maxWidth / 2;
+                return Stack(
+                  children: [
+                    Positioned(
+                      top: 0,
+                      bottom: 0,
+                      left: t * segmentWidth,
+                      width: segmentWidth,
+                      child: Container(
+                        decoration: BoxDecoration(
                           color: accent,
+                          borderRadius: BorderRadius.circular(22),
+                          boxShadow: [
+                            BoxShadow(
+                              color: accent.withOpacity(0.4),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    bio,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      height: 1.4,
-                      fontStyle: FontStyle.italic,
-                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.9),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+                    Row(
+                      children: List.generate(labels.length, (i) {
+                        final selected = t.round() == i;
+                        return Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => controller.animateTo(i),
+                            child: Center(
+                              child: Text(
+                                labels[i],
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: selected ? onColor(accent) : theme.hintColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         ),
       ),
     );
@@ -506,42 +594,63 @@ class _PrivateLibraryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: theme.cardColor.withOpacity(0.5),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: theme.dividerColor.withOpacity(0.4)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.lock_outline, color: theme.hintColor),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    context.tr('user_library_private'),
-                    style: TextStyle(color: theme.hintColor),
-                  ),
-                ),
-              ],
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+      child: Row(
+        children: [
+          Icon(Icons.lock_outline, color: theme.hintColor),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              context.tr('user_library_private'),
+              style: TextStyle(color: theme.hintColor),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 }
 
-/// Frosted-glass preview card for the profile's liked tracks: up to 5 most
-/// recently liked, labeled "Избранное" (favorites), with a "Перейти"
-/// button that opens the full liked-tracks list ([_UserTracksScreen]).
-class _FavoritesGlassCard extends StatelessWidget {
-  const _FavoritesGlassCard({required this.tracks, required this.onOpen});
+/// Section header shared by [_FavoritesSection] and [_PlaylistsSection]:
+/// bold title on the left, a small pill count/icon on the right, matching
+/// the flat (non-card) section-header style used throughout the redesigned
+/// profile.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, this.count, this.icon, this.onOpen});
+
+  final String title;
+  final int? count;
+  final IconData? icon;
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 12, 6),
+      child: Row(
+        children: [
+          Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          if (icon != null && count != null) ...[
+            const SizedBox(width: 6),
+            Icon(icon, size: 15, color: theme.hintColor),
+            const SizedBox(width: 3),
+            Text('$count', style: TextStyle(fontSize: 13, color: theme.hintColor)),
+          ],
+          const Spacer(),
+          if (onOpen != null)
+            TextButton(onPressed: onOpen, child: Text(context.tr('go_to'))),
+        ],
+      ),
+    );
+  }
+}
+
+/// Horizontally scrolling row of the profile's liked tracks, shown as
+/// square cover cards with the title/artist underneath — matches a
+/// music-app "Favorites" shelf rather than the old vertical list rows.
+class _FavoritesSection extends StatelessWidget {
+  const _FavoritesSection({required this.tracks, required this.onOpen});
 
   final List<Track> tracks;
   final VoidCallback? onOpen;
@@ -549,83 +658,93 @@ class _FavoritesGlassCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final preview = tracks.take(5).toList();
+    final preview = tracks.take(10).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionHeader(
+          title: context.tr('favorites'),
+          count: tracks.length,
+          icon: Icons.favorite_border,
+          onOpen: onOpen,
+        ),
+        if (preview.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(context.tr('user_no_liked_tracks'), style: TextStyle(color: theme.hintColor)),
+          )
+        else
+          SizedBox(
+            height: 136,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: preview.length,
+              itemBuilder: (context, i) => _TrackCoverCard(
+                track: preview[i],
+                onTap: () => context.read<PlayerProvider>().playQueue(tracks, startIndex: i),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-            decoration: BoxDecoration(
-              color: theme.cardColor.withOpacity(0.5),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: theme.dividerColor.withOpacity(0.4)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [Color(0xFFFA2D48), Color(0xFF7B2FF7)]),
-                        shape: BoxShape.circle,
-                      ),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.favorite, color: Colors.white, size: 18),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            context.tr('favorites'),
-                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            '${tracks.length}',
-                            style: TextStyle(fontSize: 13, color: theme.hintColor),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (onOpen != null)
-                      TextButton(
-                        onPressed: onOpen,
-                        child: Text(context.tr('go_to')),
-                      ),
-                  ],
-                ),
-                if (preview.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 10, 4, 4),
-                    child: Text(
-                      context.tr('user_no_liked_tracks'),
-                      style: TextStyle(color: theme.hintColor),
-                    ),
-                  )
-                else
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Column(
-                      children: [
-                        for (var i = 0; i < preview.length; i++)
-                          _FavoriteTrackRow(
-                            track: preview[i],
-                            onTap: () => context.read<PlayerProvider>().playQueue(tracks, startIndex: i),
-                          ),
-                      ],
-                    ),
+class _TrackCoverCard extends StatelessWidget {
+  const _TrackCoverCard({required this.track, required this.onTap});
+
+  final Track track;
+  final VoidCallback onTap;
+
+  static const _size = 84.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isPlaying = context.select<PlayerProvider, bool>((p) => p.currentTrack?.id == track.id);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        child: SizedBox(
+          width: _size,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: CachedCoverImage(
+                  track: track,
+                  width: _size,
+                  height: _size,
+                  errorBuilder: (context) => Container(
+                    width: _size,
+                    height: _size,
+                    color: theme.cardColor,
+                    child: const Icon(Icons.music_note, size: 20),
                   ),
-              ],
-            ),
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                track.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: isPlaying ? theme.colorScheme.secondary : null,
+                ),
+              ),
+              Text(
+                track.artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: theme.hintColor),
+              ),
+            ],
           ),
         ),
       ),
@@ -633,151 +752,51 @@ class _FavoritesGlassCard extends StatelessWidget {
   }
 }
 
-class _FavoriteTrackRow extends StatelessWidget {
-  const _FavoriteTrackRow({required this.track, required this.onTap});
-
-  final Track track;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final isPlaying = context.watch<PlayerProvider>().currentTrack?.id == track.id;
-    final accent = Theme.of(context).colorScheme.secondary;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CachedCoverImage(
-                track: track,
-                width: 44,
-                height: 44,
-                errorBuilder: (context) => Container(
-                  width: 44,
-                  height: 44,
-                  color: Theme.of(context).cardColor,
-                  child: const Icon(Icons.music_note, size: 18),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: isPlaying ? accent : null,
-                    ),
-                  ),
-                  Text(
-                    track.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, color: Theme.of(context).hintColor),
-                  ),
-                ],
-              ),
-            ),
-            if (isPlaying) Icon(Icons.graphic_eq, size: 18, color: accent),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Frosted-glass card for the profile's playlists, styled to match
-/// [_FavoritesGlassCard] — same blur, translucency and row layout, just with
-/// playlist covers/names/track counts instead of tracks.
-class _PlaylistsGlassCard extends StatelessWidget {
-  const _PlaylistsGlassCard({required this.playlists});
+/// Horizontally scrolling row of the profile's playlists, styled to match
+/// [_FavoritesSection] — same square-card shelf, just with playlist
+/// covers/names/track counts instead of tracks.
+class _PlaylistsSection extends StatelessWidget {
+  const _PlaylistsSection({required this.playlists});
 
   final List<Playlist> playlists;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-            decoration: BoxDecoration(
-              color: theme.cardColor.withOpacity(0.5),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: theme.dividerColor.withOpacity(0.4)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(colors: [Color(0xFF2FA8F7), Color(0xFF7B2FF7)]),
-                        shape: BoxShape.circle,
-                      ),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.queue_music, color: Colors.white, size: 18),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        context.tr('playlists'),
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-                if (playlists.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 10, 4, 4),
-                    child: Text(
-                      context.tr('user_no_playlists'),
-                      style: TextStyle(color: theme.hintColor),
-                    ),
-                  )
-                else
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Column(
-                      children: [
-                        for (final playlist in playlists) _PlaylistGlassRow(playlist: playlist),
-                      ],
-                    ),
-                  ),
-              ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionHeader(title: context.tr('playlists')),
+        if (playlists.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(context.tr('user_no_playlists'), style: TextStyle(color: theme.hintColor)),
+          )
+        else
+          SizedBox(
+            height: 136,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: playlists.length,
+              itemBuilder: (context, i) => _PlaylistCoverCard(playlist: playlists[i]),
             ),
           ),
-        ),
-      ),
+      ],
     );
   }
 }
 
-class _PlaylistGlassRow extends StatelessWidget {
-  const _PlaylistGlassRow({required this.playlist});
+class _PlaylistCoverCard extends StatelessWidget {
+  const _PlaylistCoverCard({required this.playlist});
 
   final Playlist playlist;
 
+  static const _size = 84.0;
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final library = context.watch<LibraryProvider>();
     var displayCover = playlist.coverUrl;
     if (displayCover.isEmpty && playlist.trackIds.isNotEmpty) {
@@ -787,52 +806,47 @@ class _PlaylistGlassRow extends StatelessWidget {
     }
 
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(8),
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => _ReadOnlyPlaylistScreen(playlist: playlist)),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: displayCover.isEmpty
-                  ? Container(
-                      width: 44,
-                      height: 44,
-                      color: Theme.of(context).cardColor,
-                      alignment: Alignment.center,
-                      child: Icon(Icons.queue_music, size: 18, color: Theme.of(context).hintColor),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: displayCover,
-                      width: 44,
-                      height: 44,
-                      fit: BoxFit.cover,
-                    ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    playlist.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    '${playlist.trackIds.length}',
-                    style: TextStyle(fontSize: 13, color: Theme.of(context).hintColor),
-                  ),
-                ],
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        child: SizedBox(
+          width: _size,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: displayCover.isEmpty
+                    ? Container(
+                        width: _size,
+                        height: _size,
+                        color: theme.cardColor,
+                        alignment: Alignment.center,
+                        child: Icon(Icons.queue_music, size: 22, color: theme.hintColor),
+                      )
+                    : CachedNetworkImage(
+                        imageUrl: displayCover,
+                        width: _size,
+                        height: _size,
+                        fit: BoxFit.cover,
+                      ),
               ),
-            ),
-            Icon(Icons.chevron_right, size: 20, color: Theme.of(context).hintColor),
-          ],
+              const SizedBox(height: 5),
+              Text(
+                playlist.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                '${playlist.trackIds.length}',
+                style: TextStyle(fontSize: 11, color: theme.hintColor),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1246,7 +1260,9 @@ class _UserTracksScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final player = context.watch<PlayerProvider>();
+    final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
+    final hasTrack = context.select<PlayerProvider, bool>((p) => p.hasTrack);
+    final player = context.read<PlayerProvider>();
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: ListView.builder(
@@ -1254,7 +1270,7 @@ class _UserTracksScreen extends StatelessWidget {
         itemCount: tracks.length,
         itemBuilder: (context, i) => TrackListTile(
           track: tracks[i],
-          isPlaying: player.currentTrack?.id == tracks[i].id,
+          isPlaying: currentTrackId == tracks[i].id,
           onTap: () => player.playQueue(tracks, startIndex: i),
           trailing: IconButton(
             icon: const Icon(Icons.more_vert),
@@ -1266,7 +1282,7 @@ class _UserTracksScreen extends StatelessWidget {
           ),
         ),
       ),
-      bottomNavigationBar: player.hasTrack
+      bottomNavigationBar: hasTrack
           ? const Padding(padding: EdgeInsets.only(bottom: 6), child: MiniPlayer())
           : null,
     );
@@ -1285,7 +1301,9 @@ class _ReadOnlyPlaylistScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
-    final player = context.watch<PlayerProvider>();
+    final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
+    final hasTrack = context.select<PlayerProvider, bool>((p) => p.hasTrack);
+    final player = context.read<PlayerProvider>();
     final trackMap = {for (final t in library.tracks) t.id: t};
     final tracks = playlist.trackIds.map((id) => trackMap[id]).whereType<Track>().toList();
 
@@ -1303,7 +1321,7 @@ class _ReadOnlyPlaylistScreen extends StatelessWidget {
               itemCount: tracks.length,
               itemBuilder: (context, i) => TrackListTile(
                 track: tracks[i],
-                isPlaying: player.currentTrack?.id == tracks[i].id,
+                isPlaying: currentTrackId == tracks[i].id,
                 onTap: () => player.playQueue(tracks, startIndex: i),
                 trailing: IconButton(
                   icon: const Icon(Icons.more_vert),

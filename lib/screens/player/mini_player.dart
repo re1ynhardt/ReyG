@@ -7,6 +7,23 @@ import '../../providers/player_provider.dart';
 import '../../widgets/cached_cover_image.dart';
 import 'now_playing_screen.dart';
 
+/// Persistent bottom bar — mounted on (almost) every screen, so anything
+/// expensive here is paid on every frame of every scroll in the app.
+///
+/// PERF NOTE: playback position ticks via [PlayerProvider.notifyListeners]
+/// several times a second. The old version called `context.watch<PlayerProvider>()`
+/// at the top of build(), so the *entire* bar — including the cover art and
+/// the `BackdropFilter` blur behind it — was rebuilt and re-blurred on every
+/// tick, even though only the thin progress line actually changes that
+/// often. `BackdropFilter` is one of the most expensive widgets in Flutter
+/// (it forces a `saveLayer` + GPU blur of whatever's behind it), so doing
+/// that continuously while the person scrolls a list underneath it is the
+/// single biggest cause of the jank.
+///
+/// Fix: split the bar into pieces scoped to what they actually need via
+/// `context.select`, so only the progress line rebuilds on each tick —
+/// the cover/blur/buttons only rebuild when the track or transport state
+/// actually changes.
 class MiniPlayer extends StatefulWidget {
   const MiniPlayer({super.key});
 
@@ -26,14 +43,12 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    final player = context.watch<PlayerProvider>();
-    final track = player.currentTrack;
+    // Only rebuilds when the *track itself* changes (new/cleared track) —
+    // not on position/duration ticks, since PlayerProvider only reassigns
+    // this field from the currentIndexStream listener. This is the one
+    // watch this widget needs at this level.
+    final track = context.select<PlayerProvider, Track?>((p) => p.currentTrack);
     if (track == null || track.id == _dismissingTrackId) return const SizedBox.shrink();
-
-    final duration = player.duration ?? track.duration;
-    final progress = duration.inMilliseconds == 0
-        ? 0.0
-        : (player.position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
 
     return Dismissible(
       // Keyed by track id so Flutter treats a new track as a fresh widget
@@ -45,11 +60,11 @@ class _MiniPlayerState extends State<MiniPlayer> {
         // Fire-and-forget: the mini player is already gone from the tree
         // via the setState above, so this doesn't need to be awaited or
         // ordered relative to anything UI-related.
-        player.stopAndDismiss();
+        context.read<PlayerProvider>().stopAndDismiss();
       },
       background: _buildSwipeBackground(context, Alignment.centerLeft),
       secondaryBackground: _buildSwipeBackground(context, Alignment.centerRight),
-      child: _buildContent(context, player, track, progress),
+      child: _MiniPlayerContent(track: track),
     );
   }
 
@@ -66,8 +81,19 @@ class _MiniPlayerState extends State<MiniPlayer> {
       child: const Icon(Icons.stop_circle_rounded, color: Colors.white),
     );
   }
+}
 
-  Widget _buildContent(BuildContext context, PlayerProvider player, Track track, double progress) {
+/// Everything that only depends on *which track* is playing — cover art,
+/// the blurred backdrop behind it, title/artist text, and the transport
+/// buttons. None of this needs to know about playback position, so none
+/// of it should rebuild on position ticks.
+class _MiniPlayerContent extends StatelessWidget {
+  const _MiniPlayerContent({required this.track});
+
+  final Track track;
+
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
         PageRouteBuilder(
@@ -123,22 +149,37 @@ class _MiniPlayerState extends State<MiniPlayer> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Cover art blown up to fill the whole bar — this is the layer
-            // BackdropFilter below blurs, giving the bar a soft glow/gradient
-            // tinted by the track's own artwork.
-            Positioned.fill(
-              child: CachedCoverImage(
-                track: track,
-                fit: BoxFit.cover,
-                errorBuilder: (context) => Container(color: Theme.of(context).cardColor),
-              ),
-            ),
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30, tileMode: TileMode.mirror),
-                // Tint so text/icons stay legible over whatever colors the
-                // blurred art produced, while still letting them show through.
-                child: Container(color: Theme.of(context).cardColor.withOpacity(0.55)),
+            // Cover art + its BackdropFilter blur, isolated in their own
+            // RepaintBoundary. This subtree is rebuilt only when the
+            // track changes (see _MiniPlayerContent scope above), so the
+            // RepaintBoundary lets the engine reuse the already-rasterized
+            // blurred layer on every other frame — including the ~5x/sec
+            // frames where only the progress line below changes — instead
+            // of re-running the (expensive) blur.
+            RepaintBoundary(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Cover art blown up to fill the whole bar — this is the
+                  // layer BackdropFilter below blurs, giving the bar a soft
+                  // glow/gradient tinted by the track's own artwork.
+                  Positioned.fill(
+                    child: CachedCoverImage(
+                      track: track,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context) => Container(color: Theme.of(context).cardColor),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30, tileMode: TileMode.mirror),
+                      // Tint so text/icons stay legible over whatever colors
+                      // the blurred art produced, while still letting them
+                      // show through.
+                      child: Container(color: Theme.of(context).cardColor.withOpacity(0.55)),
+                    ),
+                  ),
+                ],
               ),
             ),
             Column(
@@ -179,56 +220,102 @@ class _MiniPlayerState extends State<MiniPlayer> {
                             ],
                           ),
                         ),
-                        IconButton(
-                          iconSize: 22,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                          icon: const Icon(Icons.skip_previous_rounded),
-                          onPressed: player.previous,
-                        ),
-                        const SizedBox(width: 2),
-                        IconButton(
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                          icon: Icon(player.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
-                          onPressed: player.togglePlayPause,
-                        ),
-                        const SizedBox(width: 2),
-                        IconButton(
-                          iconSize: 22,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                          icon: const Icon(Icons.skip_next_rounded),
-                          onPressed: player.next,
-                        ),
-                        const SizedBox(width: 2),
-                        IconButton(
-                          iconSize: 20,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                          icon: Icon(player.isRepeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded),
-                          color: player.isRepeatOn
-                              ? Theme.of(context).colorScheme.secondary
-                              : Theme.of(context).hintColor,
-                          onPressed: player.toggleRepeat,
-                        ),
+                        const _MiniPlayerButtons(),
                       ],
                     ),
                   ),
                 ),
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 2,
-                    backgroundColor: Colors.transparent,
-                    valueColor: AlwaysStoppedAnimation(Theme.of(context).colorScheme.secondary),
-                  ),
-                ),
+                _MiniPlayerProgressBar(fallbackDuration: track.duration),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Transport controls. Reads playback methods once via `context.read`
+/// (they're stable function references, no need to watch for those) and
+/// only *watches* the small bits of state that affect how the buttons
+/// look (`isPlaying`, repeat mode) — both of which change rarely (user
+/// taps), unlike position.
+class _MiniPlayerButtons extends StatelessWidget {
+  const _MiniPlayerButtons();
+
+  @override
+  Widget build(BuildContext context) {
+    final player = context.read<PlayerProvider>();
+    final isPlaying = context.select<PlayerProvider, bool>((p) => p.isPlaying);
+    final isRepeatOn = context.select<PlayerProvider, bool>((p) => p.isRepeatOn);
+    final isRepeatOne = context.select<PlayerProvider, bool>((p) => p.isRepeatOne);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          iconSize: 22,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          icon: const Icon(Icons.skip_previous_rounded),
+          onPressed: player.previous,
+        ),
+        const SizedBox(width: 2),
+        IconButton(
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
+          onPressed: player.togglePlayPause,
+        ),
+        const SizedBox(width: 2),
+        IconButton(
+          iconSize: 22,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          icon: const Icon(Icons.skip_next_rounded),
+          onPressed: player.next,
+        ),
+        const SizedBox(width: 2),
+        IconButton(
+          iconSize: 20,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          icon: Icon(isRepeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded),
+          color: isRepeatOn ? Theme.of(context).colorScheme.secondary : Theme.of(context).hintColor,
+          onPressed: player.toggleRepeat,
+        ),
+      ],
+    );
+  }
+}
+
+/// The ONLY part of the mini player that's meant to rebuild on every
+/// position tick. Isolated into its own tiny (2px-tall) widget so the
+/// cover/blur/buttons above never have to repaint just because playback
+/// moved forward a fraction of a second.
+class _MiniPlayerProgressBar extends StatelessWidget {
+  const _MiniPlayerProgressBar({required this.fallbackDuration});
+
+  final Duration fallbackDuration;
+
+  @override
+  Widget build(BuildContext context) {
+    // A single `select` with a computed value: this widget only rebuilds
+    // when the *resulting ratio* changes, not on every raw position or
+    // duration update individually.
+    final progress = context.select<PlayerProvider, double>((p) {
+      final duration = p.duration ?? fallbackDuration;
+      if (duration.inMilliseconds == 0) return 0.0;
+      return (p.position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+    });
+
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+      child: LinearProgressIndicator(
+        value: progress,
+        minHeight: 2,
+        backgroundColor: Colors.transparent,
+        valueColor: AlwaysStoppedAnimation(Theme.of(context).colorScheme.secondary),
       ),
     );
   }

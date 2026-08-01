@@ -21,7 +21,9 @@ class TagTracksScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
-    final player = context.watch<PlayerProvider>();
+    final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
+    final hasTrack = context.select<PlayerProvider, bool>((p) => p.hasTrack);
+    final player = context.read<PlayerProvider>();
     final tracks = library.tracksForTag(tag);
     final cover = tracks.isNotEmpty ? tracks.first.coverUrl : '';
 
@@ -87,7 +89,7 @@ class TagTracksScreen extends StatelessWidget {
                   final track = tracks[i];
                   return TrackListTile(
                     track: track,
-                    isPlaying: player.currentTrack?.id == track.id,
+                    isPlaying: currentTrackId == track.id,
                     onTap: () => player.playQueue(tracks, startIndex: i),
                     trailing: IconButton(
                       icon: const Icon(Icons.more_vert),
@@ -105,7 +107,7 @@ class TagTracksScreen extends StatelessWidget {
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
-      bottomNavigationBar: player.hasTrack
+      bottomNavigationBar: hasTrack
           ? Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: const MiniPlayer(),

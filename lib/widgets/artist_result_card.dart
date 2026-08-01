@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../models/track.dart';
 import '../providers/app_state.dart';
+import '../theme/app_theme.dart';
 import 'artist_avatar.dart';
 import 'track_list_tile.dart';
 
@@ -206,7 +207,7 @@ class _PillButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = filled ? Colors.white : color.withOpacity(enabled ? 1 : 0.4);
+    final fg = filled ? onColor(color) : color.withOpacity(enabled ? 1 : 0.4);
     final bg = filled
         ? color.withOpacity(enabled ? 1 : 0.35)
         : color.withOpacity(0.10);
