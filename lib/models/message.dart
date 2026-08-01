@@ -22,8 +22,11 @@ class DirectMessage {
   final DateTime createdAt;
 
   /// Enforced by the chat composer and by backends that accept
-  /// [ApiService.sendMessage] — anything longer is rejected.
-  static const maxLength = 2000;
+  /// [ApiService.sendMessage] — anything longer is rejected. Sized to
+  /// comfortably fit an encoded `MessageAttachment` (see
+  /// message_attachment.dart) for a large playlist, on top of normal
+  /// typed messages.
+  static const maxLength = 8000;
 
   factory DirectMessage.fromJson(Map<String, dynamic> json) => DirectMessage(
         id: json['id'] as String,

@@ -99,6 +99,7 @@ class YandexStorageApiService implements ApiService {
   static const _notificationsKey = 'db/notifications.json';
   static const _artistAvatarsKey = 'db/artist_avatars.json';
   static const _messagesKey = 'db/messages.json';
+  static const _messageReadsKey = 'db/message_reads.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
   static const _avatarsPrefix = 'media/avatars/';
@@ -1732,6 +1733,52 @@ class YandexStorageApiService implements ApiService {
       return newRow;
     });
     return DirectMessage.fromJson({...row, 'text': trimmed});
+  }
+
+  // --- Messages: read receipts ---------------------------------------------
+  // A single collection of rows {reader_id, other_user_id, read_up_to}:
+  // "reader_id has read every message exchanged with other_user_id up
+  // through read_up_to". Each account writes only its own row (keyed by
+  // reader_id == the current session), so both sides of a conversation
+  // can read the other's row without either being able to forge it.
+
+  @override
+  Future<void> markThreadRead(String otherUserId) async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final now = DateTime.now().millisecondsSinceEpoch / 1000;
+    await _withCollection(_messageReadsKey, (data) {
+      final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final existing = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['reader_id'] == myId && r?['other_user_id'] == otherUserId,
+            orElse: () => null,
+          );
+      if (existing != null) {
+        existing['read_up_to'] = now;
+      } else {
+        items.add({'reader_id': myId, 'other_user_id': otherUserId, 'read_up_to': now});
+      }
+      return null;
+    });
+  }
+
+  @override
+  Future<Map<String, DateTime>> fetchReadReceipts() async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final data = await _readCollection(_messageReadsKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final receipts = <String, DateTime>{};
+    for (final row in items) {
+      if (row['other_user_id'] != myId) continue;
+      final readerId = row['reader_id'] as String;
+      final readUpTo = DateTime.fromMillisecondsSinceEpoch(
+        (((row['read_up_to'] as num?) ?? 0) * 1000).round(),
+        isUtc: true,
+      ).toLocal();
+      receipts[readerId] = readUpTo;
+    }
+    return receipts;
   }
 }
 

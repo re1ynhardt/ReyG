@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/message.dart';
+import '../../models/user.dart';
 import '../../providers/app_state.dart';
 import '../../providers/community_provider.dart';
 import '../../providers/messages_provider.dart';
 import '../../widgets/artist_avatar.dart';
+import '../../widgets/message_read_ticks.dart';
+import '../community/user_profile_screen.dart';
 import 'chat_screen.dart';
 
 /// List of the signed-in account's DM conversations. Opened from the
@@ -50,7 +53,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     itemBuilder: (context, index) {
                       final convo = messages.conversations[index];
                       final user = community.userById(convo.otherUserId);
-                      return _ConversationTile(convo: convo, displayName: user?.displayName, avatarUrl: user?.avatarUrl);
+                      return _ConversationTile(
+                        convo: convo,
+                        user: user,
+                        unread: messages.isUnread(convo),
+                        readByOther: convo.lastMessageFromMe
+                            ? messages.isReadByOther(convo.otherUserId, convo.lastMessageAt)
+                            : false,
+                      );
                     },
                   ),
       ),
@@ -88,26 +98,67 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({required this.convo, required this.displayName, required this.avatarUrl});
+  const _ConversationTile({
+    required this.convo,
+    required this.user,
+    required this.unread,
+    required this.readByOther,
+  });
 
   final ConversationSummary convo;
-  final String? displayName;
-  final String? avatarUrl;
+  final AppUser? user;
+
+  /// True when the latest message is an unread incoming one from them.
+  final bool unread;
+
+  /// True when the latest message is one I sent and they've read it.
+  /// Meaningless (and unused) when the latest message is from them.
+  final bool readByOther;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = displayName ?? convo.otherUserId;
+    final name = user?.displayName ?? convo.otherUserId;
+    final avatarUrl = user?.avatarUrl ?? '';
     final preview = convo.lastMessageFromMe ? '${context.tr('you_prefix')}${convo.lastMessage}' : convo.lastMessage;
     return ListTile(
-      leading: ArtistAvatar(imageUrl: avatarUrl ?? '', radius: 24),
-      title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.hintColor)),
+      leading: GestureDetector(
+        onTap: user == null ? null : () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => UserProfileScreen(user: user!)),
+            ),
+        child: ArtistAvatar(imageUrl: avatarUrl, radius: 24),
+      ),
+      title: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontWeight: unread ? FontWeight.w800 : FontWeight.w600),
+      ),
+      subtitle: Row(
+        children: [
+          if (convo.lastMessageFromMe) ...[
+            MessageReadTicks(read: readByOther, size: 14),
+            const SizedBox(width: 4),
+          ],
+          Expanded(
+            child: Text(
+              preview,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: unread ? theme.colorScheme.onSurface : theme.hintColor,
+                fontWeight: unread ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+        ],
+      ),
+      trailing: unread ? const UnreadDot() : null,
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ChatScreen(
           otherUserId: convo.otherUserId,
           otherUserDisplayName: name,
-          otherUserAvatarUrl: avatarUrl ?? '',
+          otherUserAvatarUrl: avatarUrl,
         ),
       )),
     );

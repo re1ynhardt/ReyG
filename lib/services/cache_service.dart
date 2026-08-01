@@ -69,4 +69,25 @@ class CacheService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kSearchHistory);
   }
+
+  // --- Messages: last-read timestamps -------------------------------------
+  // On-device only: for each conversation (keyed by the other account's
+  // id) the epoch-ms timestamp of the last time the current device opened
+  // that thread. Used to derive the unread badge on the Messages nav item
+  // without needing a server-side "read" flag.
+  static const _kMessageLastRead = 'message_last_read';
+
+  Future<Map<String, int>> getMessageLastRead() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kMessageLastRead);
+    if (raw == null) return {};
+    return (jsonDecode(raw) as Map<String, dynamic>).map((k, v) => MapEntry(k, v as int));
+  }
+
+  Future<void> setMessageLastRead(String otherUserId, int epochMillis) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = await getMessageLastRead();
+    current[otherUserId] = epochMillis;
+    await prefs.setString(_kMessageLastRead, jsonEncode(current));
+  }
 }

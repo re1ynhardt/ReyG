@@ -60,6 +60,8 @@ import 'api_service.dart';
 ///   GET    /messages/conversations                          -> [{other_user_id, text, created_at, from_me}, ...]
 ///   GET    /messages/{otherUserId}                           -> [message json, ...]
 ///   POST   /messages           {recipient_id, text}          -> message json
+///   PUT    /messages/{otherUserId}/read                       -> 204
+///   GET    /messages/read_receipts                            -> {other_user_id: read_up_to_epoch_seconds}
 class RemoteApiService implements ApiService {
   RemoteApiService({required this.baseUrl, this.authToken});
 
@@ -518,6 +520,22 @@ class RemoteApiService implements ApiService {
         headers: _headers, body: jsonEncode({'recipient_id': recipientId, 'text': text}));
     _throwIfError(res);
     return DirectMessage.fromJson(jsonDecode(res.body));
+  }
+
+  @override
+  Future<void> markThreadRead(String otherUserId) async {
+    final res = await http.put(_u('/messages/${Uri.encodeComponent(otherUserId)}/read'), headers: _headers);
+    _throwIfError(res);
+  }
+
+  @override
+  Future<Map<String, DateTime>> fetchReadReceipts() async {
+    final res = await http.get(_u('/messages/read_receipts'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as Map<String, dynamic>).map((k, v) => MapEntry(
+          k,
+          DateTime.fromMillisecondsSinceEpoch((((v as num?) ?? 0) * 1000).round(), isUtc: true).toLocal(),
+        ));
   }
 
   void _throwIfError(http.Response res) {

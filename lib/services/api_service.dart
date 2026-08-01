@@ -282,4 +282,20 @@ abstract class ApiService {
   /// [ApiException] if the recipient hasn't published an encryption key
   /// yet (i.e. has never opened Messages).
   Future<DirectMessage> sendMessage({required String recipientId, required String text});
+
+  /// Records that the current user has read every message from
+  /// [otherUserId] up through now. Drives both the current user's own
+  /// unread badge and — since this is visible to the other account too —
+  /// the read/delivered ticks [otherUserId] sees on messages they sent.
+  /// Safe to call repeatedly (e.g. every time a thread is opened).
+  Future<void> markThreadRead(String otherUserId);
+
+  /// For each conversation partner, the timestamp up to which that
+  /// account has read messages sent to them by the current user. A
+  /// partner with no entry has never opened that thread (or Messages at
+  /// all) — every message sent to them still shows as unread. Used to
+  /// render read/delivered ticks in the conversation list and in a chat
+  /// thread: a sent message counts as read once its `createdAt` is at or
+  /// before the matching timestamp here.
+  Future<Map<String, DateTime>> fetchReadReceipts();
 }

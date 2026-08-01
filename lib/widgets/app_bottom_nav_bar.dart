@@ -4,11 +4,19 @@ import 'package:flutter/material.dart';
 
 /// A single destination in [AppBottomNavBar].
 class AppNavItem {
-  const AppNavItem({required this.icon, required this.activeIcon, required this.label});
+  const AppNavItem({
+    required this.icon,
+    required this.activeIcon,
+    required this.label,
+    this.badgeCount = 0,
+  });
 
   final IconData icon;
   final IconData activeIcon;
   final String label;
+
+  /// When > 0, a small red counter badge is drawn on top of the icon.
+  final int badgeCount;
 }
 
 /// A floating, pill-style bottom navigation bar.
@@ -84,6 +92,37 @@ class AppBottomNavBar extends StatelessWidget {
   }
 }
 
+/// Small red pill showing an unread count (e.g. on the messages nav item).
+/// Caps the displayed number at "9+" so it never outgrows the badge.
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count > 9 ? '9+' : '$count';
+    return Container(
+      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      decoration: BoxDecoration(
+        color: Colors.red,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          height: 1.2,
+        ),
+      ),
+    );
+  }
+}
+
 class _NavItemButton extends StatelessWidget {
   const _NavItemButton({
     required this.item,
@@ -116,17 +155,28 @@ class _NavItemButton extends StatelessWidget {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Semantics(
-              label: item.label,
+              label: item.badgeCount > 0 ? '${item.label}, ${item.badgeCount}' : item.label,
               selected: selected,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
-                child: Icon(
-                  selected ? item.activeIcon : item.icon,
-                  key: ValueKey(selected),
-                  size: 24,
-                  color: selected ? accent : unselectedColor,
-                ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+                    child: Icon(
+                      selected ? item.activeIcon : item.icon,
+                      key: ValueKey(selected),
+                      size: 24,
+                      color: selected ? accent : unselectedColor,
+                    ),
+                  ),
+                  if (item.badgeCount > 0)
+                    Positioned(
+                      right: -6,
+                      top: -4,
+                      child: _UnreadBadge(count: item.badgeCount),
+                    ),
+                ],
               ),
             ),
           ),

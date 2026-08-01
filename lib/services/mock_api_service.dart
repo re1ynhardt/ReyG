@@ -794,6 +794,27 @@ class MockApiService implements ApiService {
     _messages.add(message);
     return message;
   }
+
+  final Map<String, Map<String, DateTime>> _readUpTo = {}; // readerId -> otherUserId -> ts
+
+  @override
+  Future<void> markThreadRead(String otherUserId) async {
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    (_readUpTo[current.id] ??= {})[otherUserId] = DateTime.now();
+  }
+
+  @override
+  Future<Map<String, DateTime>> fetchReadReceipts() async {
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final receipts = <String, DateTime>{};
+    _readUpTo.forEach((readerId, otherMap) {
+      final readUpTo = otherMap[current.id];
+      if (readUpTo != null) receipts[readerId] = readUpTo;
+    });
+    return receipts;
+  }
 }
 
 class ApiException implements Exception {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_state.dart';
+import '../../providers/messages_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../services/update_service.dart';
 import '../../widgets/update_prompt.dart';
@@ -41,12 +42,16 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       checkForUpdatesAndPrompt(context, service: context.read<UpdateService>());
+      // Best-effort: populates the unread badge on the messages nav item
+      // without requiring the user to open that tab first.
+      context.read<MessagesProvider>().loadConversations();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final hasTrack = context.select<PlayerProvider, bool>((p) => p.hasTrack);
+    final unreadMessages = context.select<MessagesProvider, int>((p) => p.unreadCount);
 
     return Scaffold(
       extendBody: true,
@@ -66,7 +71,12 @@ class _HomeScreenState extends State<HomeScreen> {
               AppNavItem(icon: Icons.search, activeIcon: Icons.search, label: context.tr('search')),
               AppNavItem(icon: Icons.library_music_outlined, activeIcon: Icons.library_music, label: context.tr('library')),
               AppNavItem(icon: Icons.groups_outlined, activeIcon: Icons.groups, label: context.tr('community')),
-              AppNavItem(icon: Icons.chat_bubble_outline, activeIcon: Icons.chat_bubble, label: context.tr('messages')),
+              AppNavItem(
+                icon: Icons.chat_bubble_outline,
+                activeIcon: Icons.chat_bubble,
+                label: context.tr('messages'),
+                badgeCount: unreadMessages,
+              ),
             ],
           ),
         ],
