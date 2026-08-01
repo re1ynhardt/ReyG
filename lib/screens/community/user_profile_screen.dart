@@ -16,6 +16,7 @@ import '../../widgets/artist_avatar.dart';
 import '../../widgets/cached_cover_image.dart';
 import '../../widgets/track_list_tile.dart';
 import '../library/playlist_picker_sheet.dart';
+import '../messages/chat_screen.dart';
 import '../player/mini_player.dart';
 import '../settings/banner_crop_screen.dart';
 
@@ -498,9 +499,13 @@ class _ProfileHero extends StatelessWidget {
                         icon: Icons.mail_outline,
                         filled: false,
                         color: Colors.white,
-                        // No functionality yet — the button is a visual
-                        // placeholder until messaging ships.
-                        onPressed: () {},
+                        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => ChatScreen(
+                            otherUserId: user.id,
+                            otherUserDisplayName: user.displayName,
+                            otherUserAvatarUrl: user.avatarUrl,
+                          ),
+                        )),
                       ),
                     ),
                   ],

@@ -8,6 +8,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/community_provider.dart';
 import '../../widgets/artist_avatar.dart';
 import '../../widgets/section_header.dart';
+import '../messages/chat_screen.dart';
 import 'user_profile_screen.dart';
 
 /// Community tab: every registered user, searchable by name, with a small
@@ -289,7 +290,18 @@ class _UserTile extends StatelessWidget {
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
             ),
-          if (!isSelf)
+          if (!isSelf) ...[
+            IconButton(
+              icon: const Icon(Icons.mail_outline),
+              tooltip: context.tr('profile_message'),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => ChatScreen(
+                  otherUserId: user.id,
+                  otherUserDisplayName: user.displayName,
+                  otherUserAvatarUrl: user.avatarUrl,
+                ),
+              )),
+            ),
             IconButton(
               icon: Icon(
                 isFavorite ? Icons.star : Icons.star_border,
@@ -300,6 +312,7 @@ class _UserTile extends StatelessWidget {
                   : context.tr('add_user_to_favorites'),
               onPressed: () => context.read<CommunityProvider>().toggleFavoriteUser(user.id),
             ),
+          ],
         ],
       ),
     );

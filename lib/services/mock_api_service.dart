@@ -3,6 +3,7 @@ import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/user.dart';
 import '../models/app_notification.dart';
+import '../models/message.dart';
 import 'api_service.dart';
 
 /// Fake backend so the UI can be built and demoed with zero server setup.
@@ -434,6 +435,7 @@ class MockApiService implements ApiService {
         token: '',
         avatarUrl: isSelf ? current!.avatarUrl : '',
         bio: isSelf ? current!.bio : '',
+        profileTheme: isSelf ? current!.profileTheme : 'dark',
       );
     }).toList();
     users.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
@@ -726,6 +728,71 @@ class MockApiService implements ApiService {
       throw ApiException('Only developer or support accounts can remove artist avatars');
     }
     _artistAvatars.remove(artist);
+  }
+
+  final List<DirectMessage> _messages = [];
+  int _messageCounter = 0;
+
+  @override
+  Future<List<ConversationSummary>> fetchConversations() async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final myId = current.id;
+    final latestByOther = <String, DirectMessage>{};
+    for (final m in _messages) {
+      if (m.senderId != myId && m.recipientId != myId) continue;
+      final otherId = m.senderId == myId ? m.recipientId : m.senderId;
+      final existing = latestByOther[otherId];
+      if (existing == null || m.createdAt.isAfter(existing.createdAt)) {
+        latestByOther[otherId] = m;
+      }
+    }
+    final summaries = latestByOther.entries
+        .map((e) => ConversationSummary(
+              otherUserId: e.key,
+              lastMessage: e.value.text,
+              lastMessageAt: e.value.createdAt,
+              lastMessageFromMe: e.value.senderId == myId,
+            ))
+        .toList();
+    summaries.sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+    return summaries;
+  }
+
+  @override
+  Future<List<DirectMessage>> fetchMessages(String otherUserId) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final myId = current.id;
+    final between = _messages
+        .where((m) =>
+            (m.senderId == myId && m.recipientId == otherUserId) ||
+            (m.senderId == otherUserId && m.recipientId == myId))
+        .toList();
+    between.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return between;
+  }
+
+  @override
+  Future<DirectMessage> sendMessage({required String recipientId, required String text}) async {
+    await Future.delayed(_networkDelay);
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) throw ApiException('Message text is required');
+    if (trimmed.length > DirectMessage.maxLength) throw ApiException('Message is too long');
+    if (recipientId == current.id) throw ApiException('Cannot message yourself');
+    final message = DirectMessage(
+      id: 'm_${_messageCounter++}',
+      senderId: current.id,
+      recipientId: recipientId,
+      text: trimmed,
+      createdAt: DateTime.now(),
+    );
+    _messages.add(message);
+    return message;
   }
 }
 

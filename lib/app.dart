@@ -4,6 +4,7 @@ import 'providers/app_state.dart';
 import 'providers/auth_provider.dart';
 import 'providers/community_provider.dart';
 import 'providers/library_provider.dart';
+import 'providers/messages_provider.dart';
 import 'providers/notifications_provider.dart';
 import 'providers/player_provider.dart';
 import 'screens/splash_gate.dart';
@@ -28,6 +29,7 @@ class HarmonyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => LibraryProvider(api)),
         ChangeNotifierProvider(create: (_) => CommunityProvider(api)),
         ChangeNotifierProvider(create: (_) => NotificationsProvider(api)),
+        ChangeNotifierProvider(create: (_) => MessagesProvider(api)),
         ChangeNotifierProvider.value(value: DownloadService.instance),
         Provider.value(value: updateService),
         ChangeNotifierProxyProvider<LibraryProvider, PlayerProvider>(

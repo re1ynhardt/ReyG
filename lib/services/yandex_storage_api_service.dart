@@ -8,6 +8,7 @@ import '../models/playlist.dart';
 import '../models/track.dart';
 import '../models/user.dart';
 import '../models/app_notification.dart';
+import '../models/message.dart';
 import 'api_service.dart';
 import 'yandex_sigv4.dart';
 
@@ -96,6 +97,7 @@ class YandexStorageApiService implements ApiService {
   static const _featuredTagsKey = 'db/featured_tags.json';
   static const _notificationsKey = 'db/notifications.json';
   static const _artistAvatarsKey = 'db/artist_avatars.json';
+  static const _messagesKey = 'db/messages.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
   static const _avatarsPrefix = 'media/avatars/';
@@ -599,6 +601,7 @@ class YandexStorageApiService implements ApiService {
               bannerUrl: r['banner_url'] as String? ?? '',
               likesPrivacy: r['likes_privacy'] as String? ?? LikesPrivacy.all,
               bio: r['bio'] as String? ?? '',
+              profileTheme: r['profile_theme'] as String? ?? 'dark',
             ))
         .toList();
     users.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
@@ -1527,6 +1530,92 @@ class YandexStorageApiService implements ApiService {
       }
     }
     throw ApiException('Too many concurrent updates to artist avatars, please try again');
+  }
+
+  // --- Messages ---------------------------------------------------------
+  DirectMessage _messageFromRow(Map<String, dynamic> row) => DirectMessage.fromJson(row);
+
+  @override
+  Future<List<ConversationSummary>> fetchConversations() async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final data = await _readCollection(_messagesKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final latestByOther = <String, Map<String, dynamic>>{};
+    for (final row in items) {
+      final senderId = row['sender_id'] as String;
+      final recipientId = row['recipient_id'] as String;
+      if (senderId != myId && recipientId != myId) continue;
+      final otherId = senderId == myId ? recipientId : senderId;
+      final existing = latestByOther[otherId];
+      if (existing == null ||
+          ((row['created_at'] as num?) ?? 0) > ((existing['created_at'] as num?) ?? 0)) {
+        latestByOther[otherId] = row;
+      }
+    }
+    final summaries = latestByOther.entries
+        .map((e) => ConversationSummary(
+              otherUserId: e.key,
+              lastMessage: e.value['text'] as String,
+              lastMessageAt: DateTime.fromMillisecondsSinceEpoch(
+                (((e.value['created_at'] as num?) ?? 0) * 1000).round(),
+                isUtc: true,
+              ).toLocal(),
+              lastMessageFromMe: e.value['sender_id'] == myId,
+            ))
+        .toList();
+    summaries.sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+    return summaries;
+  }
+
+  @override
+  Future<List<DirectMessage>> fetchMessages(String otherUserId) async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final data = await _readCollection(_messagesKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final between = items.where((r) =>
+        (r['sender_id'] == myId && r['recipient_id'] == otherUserId) ||
+        (r['sender_id'] == otherUserId && r['recipient_id'] == myId));
+    final messages = between.map(_messageFromRow).toList();
+    messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return messages;
+  }
+
+  @override
+  Future<DirectMessage> sendMessage({required String recipientId, required String text}) async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      throw ApiException('Message text is required');
+    }
+    if (trimmed.length > DirectMessage.maxLength) {
+      throw ApiException('Message is too long');
+    }
+    if (recipientId == myId) {
+      throw ApiException('Cannot message yourself');
+    }
+    final usersData = await _readCollection(_usersKey);
+    final userItems = (usersData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final recipientExists = userItems.any((r) => r['id'] == recipientId);
+    if (!recipientExists) {
+      throw ApiException('Recipient not found');
+    }
+
+    final row = await _withCollection(_messagesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final newRow = {
+        'id': _randomId(),
+        'sender_id': myId,
+        'recipient_id': recipientId,
+        'text': trimmed,
+        'created_at': DateTime.now().millisecondsSinceEpoch / 1000,
+      };
+      items.add(newRow);
+      return newRow;
+    });
+    return _messageFromRow(row);
   }
 }
 

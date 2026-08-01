@@ -4,6 +4,7 @@ import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/user.dart';
 import '../models/app_notification.dart';
+import '../models/message.dart';
 import 'api_service.dart';
 
 /// Real implementation that talks to your Python backend.
@@ -56,6 +57,9 @@ import 'api_service.dart';
 ///   GET    /notifications                                 -> [notification json, ...]
 ///   POST   /notifications      {title, body}               -> notification json (developer-only, NOT support)
 ///   DELETE /notifications/{id}                              -> 204 (developer-only, NOT support)
+///   GET    /messages/conversations                          -> [{other_user_id, text, created_at, from_me}, ...]
+///   GET    /messages/{otherUserId}                           -> [message json, ...]
+///   POST   /messages           {recipient_id, text}          -> message json
 class RemoteApiService implements ApiService {
   RemoteApiService({required this.baseUrl, this.authToken});
 
@@ -479,6 +483,41 @@ class RemoteApiService implements ApiService {
   Future<void> removeArtistAvatar(String artist) async {
     final res = await http.delete(_u('/artists/${Uri.encodeComponent(artist)}/avatar'), headers: _headers);
     _throwIfError(res);
+  }
+
+  @override
+  Future<List<ConversationSummary>> fetchConversations() async {
+    final res = await http.get(_u('/messages/conversations'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as List).map((e) {
+      final row = e as Map<String, dynamic>;
+      return ConversationSummary(
+        otherUserId: row['other_user_id'] as String,
+        lastMessage: row['text'] as String,
+        lastMessageAt: DateTime.fromMillisecondsSinceEpoch(
+          (((row['created_at'] as num?) ?? 0) * 1000).round(),
+          isUtc: true,
+        ).toLocal(),
+        lastMessageFromMe: row['from_me'] as bool? ?? false,
+      );
+    }).toList();
+  }
+
+  @override
+  Future<List<DirectMessage>> fetchMessages(String otherUserId) async {
+    final res = await http.get(_u('/messages/${Uri.encodeComponent(otherUserId)}'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as List)
+        .map((e) => DirectMessage.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<DirectMessage> sendMessage({required String recipientId, required String text}) async {
+    final res = await http.post(_u('/messages'),
+        headers: _headers, body: jsonEncode({'recipient_id': recipientId, 'text': text}));
+    _throwIfError(res);
+    return DirectMessage.fromJson(jsonDecode(res.body));
   }
 
   void _throwIfError(http.Response res) {

@@ -2,6 +2,7 @@ import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/user.dart';
 import '../models/app_notification.dart';
+import '../models/message.dart';
 
 /// Every screen in the app talks to the backend ONLY through this
 /// interface. Today [MockApiService] answers with fake in-memory data.
@@ -259,4 +260,21 @@ abstract class ApiService {
   /// to falling back on their most recent track cover again. Throws
   /// [ApiException] for non-developer accounts.
   Future<void> removeArtistAvatar(String artist);
+
+  // --- Messages ---------------------------------------------------------
+  /// One entry per account the current user has exchanged direct messages
+  /// with, newest conversation first. Plain text only — no encryption.
+  /// Join [ConversationSummary.otherUserId] against the Community user
+  /// list to show that conversation's name/avatar.
+  Future<List<ConversationSummary>> fetchConversations();
+
+  /// Every message exchanged between the current user and [otherUserId],
+  /// oldest first.
+  Future<List<DirectMessage>> fetchMessages(String otherUserId);
+
+  /// Sends a plain-text message from the current user to [recipientId]
+  /// and returns it. Throws [ApiException] if [text] is empty (after
+  /// trimming), longer than [DirectMessage.maxLength], [recipientId]
+  /// doesn't exist, or [recipientId] is the current user.
+  Future<DirectMessage> sendMessage({required String recipientId, required String text});
 }

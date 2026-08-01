@@ -27,6 +27,17 @@ class CommunityProvider extends ChangeNotifier {
 
   bool isFavoriteUser(String userId) => _favoriteUserIds.contains(userId);
 
+  /// Looks up a cached user by id — e.g. to resolve a DM conversation's
+  /// counterpart into a display name/avatar on the Messages tab. Returns
+  /// null if the list hasn't been loaded yet or the id isn't found;
+  /// callers should fall back to a generic placeholder in that case.
+  AppUser? userById(String id) {
+    for (final u in _users) {
+      if (u.id == id) return u;
+    }
+    return null;
+  }
+
   /// Users matching [_query] (case-insensitive, matched anywhere in the
   /// display name), with favorited accounts pinned first — each group
   /// keeps the alphabetical order the backend already returned.
