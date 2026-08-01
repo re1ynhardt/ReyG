@@ -69,6 +69,31 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
     });
   }
 
+  /// Own-profile-only (see the `if (isSelf)` gate on its AppBar action).
+  /// Lets the signed-in user pick their PUBLIC profile accent theme — see
+  /// [AppUser.profileTheme] and [AuthProvider.setProfileTheme] — right
+  /// from their own profile screen rather than from Settings, since
+  /// unlike the app-wide theme in Settings this one is what OTHER
+  /// viewers of this profile see, not how the app looks to this user.
+  Future<void> _pickProfileTheme(String currentKey) async {
+    final selected = await showModalBottomSheet<AppThemeOption>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _ProfileThemePickerSheet(
+        currentKey: currentKey,
+      ),
+    );
+    if (selected == null || !mounted) return;
+    try {
+      await context.read<AuthProvider>().setProfileTheme(selected.storageKey);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
   /// Opens the developer-only debug sheet. If the account was deleted
   /// from inside it, refreshes the Community list and pops this profile
   /// screen since it no longer refers to a real account.
@@ -114,6 +139,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
         elevation: 0,
         foregroundColor: Colors.white,
         actions: [
+          if (isSelf)
+            IconButton(
+              icon: const Icon(Icons.palette_outlined),
+              tooltip: context.tr('profile_theme'),
+              onPressed: () => _pickProfileTheme(user.profileTheme),
+            ),
           if (!isSelf)
             IconButton(
               icon: Icon(
@@ -302,8 +333,13 @@ class _ProfileHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final accent = theme.colorScheme.secondary;
+    // Deliberately NOT Theme.of(context) — this profile's accent comes
+    // from the OWNER's chosen [AppUser.profileTheme], set from this same
+    // screen (see [_pickProfileTheme]), so every viewer sees the same
+    // colors here regardless of their own local app theme.
+    final ownerTheme = AppThemeOptionX.fromStorageKey(user.profileTheme).themeData;
+    final accent = ownerTheme.colorScheme.secondary;
+    final primary = ownerTheme.colorScheme.primary;
     final topPadding = MediaQuery.of(context).padding.top;
 
     return AspectRatio(
@@ -312,11 +348,11 @@ class _ProfileHero extends StatelessWidget {
       // here — no extra `BoxFit.cover` re-cropping or distortion from a
       // mismatched container shape.
       aspectRatio: BannerCropScreen.aspectRatio,
-      child: ClipRect(child: _buildStack(context, theme, accent, topPadding)),
+      child: ClipRect(child: _buildStack(context, primary, accent, topPadding)),
     );
   }
 
-  Widget _buildStack(BuildContext context, ThemeData theme, Color accent, double topPadding) {
+  Widget _buildStack(BuildContext context, Color primary, Color accent, double topPadding) {
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -327,10 +363,10 @@ class _ProfileHero extends StatelessWidget {
               ? CachedNetworkImage(
                   imageUrl: user.bannerUrl,
                   fit: BoxFit.cover,
-                  errorWidget: (context, _, __) => _HeroGradientFallback(accent: accent),
-                  placeholder: (context, _) => _HeroGradientFallback(accent: accent),
+                  errorWidget: (context, _, __) => _HeroGradientFallback(primary: primary, accent: accent),
+                  placeholder: (context, _) => _HeroGradientFallback(primary: primary, accent: accent),
                 )
-              : _HeroGradientFallback(accent: accent),
+              : _HeroGradientFallback(primary: primary, accent: accent),
         ),
         // Scrim so the app bar icons and centered text stay readable over
         // any photo.
@@ -360,7 +396,7 @@ class _ProfileHero extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
-                    colors: [accent, theme.colorScheme.primary],
+                    colors: [accent, primary],
                   ),
                   boxShadow: [
                     BoxShadow(color: accent.withOpacity(0.55), blurRadius: 24, spreadRadius: 1),
@@ -437,19 +473,19 @@ class _ProfileHero extends StatelessWidget {
 }
 
 class _HeroGradientFallback extends StatelessWidget {
-  const _HeroGradientFallback({required this.accent});
+  const _HeroGradientFallback({required this.primary, required this.accent});
 
+  final Color primary;
   final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [accent.withOpacity(0.55), theme.colorScheme.primary.withOpacity(0.55), Colors.black],
+          colors: [accent.withOpacity(0.55), primary.withOpacity(0.55), Colors.black],
         ),
       ),
     );
@@ -864,6 +900,90 @@ class _PlaylistCoverCard extends StatelessWidget {
 /// original password, so there's nothing recoverable to display here.
 /// "Change password" sets a brand-new one instead, the same way a
 /// forgot-password reset would, without ever needing the old value.
+/// Bottom sheet listing every [AppThemeOption] as a candidate PUBLIC
+/// profile accent theme (see [_UserProfileScreenState._pickProfileTheme]).
+/// Pops with the chosen [AppThemeOption], or nothing if dismissed.
+class _ProfileThemePickerSheet extends StatelessWidget {
+  const _ProfileThemePickerSheet({required this.currentKey});
+
+  final String currentKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final current = AppThemeOptionX.fromStorageKey(currentKey);
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+              decoration: BoxDecoration(
+                color: theme.cardColor.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: theme.dividerColor.withOpacity(0.4)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.palette_outlined, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          context.tr('profile_theme'),
+                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 30, right: 8, bottom: 4),
+                    child: Text(
+                      context.tr('profile_theme_subtitle'),
+                      style: TextStyle(fontSize: 12, color: theme.hintColor),
+                    ),
+                  ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final option in AppThemeOption.values)
+                          RadioListTile<AppThemeOption>(
+                            title: Text(context.tr(option.labelKey)),
+                            secondary: CircleAvatar(
+                              radius: 16,
+                              backgroundColor: option.swatch,
+                              child: Icon(option.icon, size: 16, color: option.isDark ? Colors.white : Colors.black87),
+                            ),
+                            value: option,
+                            groupValue: current,
+                            onChanged: (v) => Navigator.of(context).pop(v),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _UserDebugSheet extends StatefulWidget {
   const _UserDebugSheet({required this.user});
 

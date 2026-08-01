@@ -251,6 +251,7 @@ class YandexStorageApiService implements ApiService {
         'banner_url': '',
         'likes_privacy': LikesPrivacy.all,
         'bio': '',
+        'profile_theme': 'dark',
       };
       items.add(row);
       return row;
@@ -291,6 +292,7 @@ class YandexStorageApiService implements ApiService {
         bannerUrl: row['banner_url'] as String? ?? '',
         likesPrivacy: row['likes_privacy'] as String? ?? LikesPrivacy.all,
         bio: row['bio'] as String? ?? '',
+        profileTheme: row['profile_theme'] as String? ?? 'dark',
       );
 
   /// Every call below re-checks that our token still belongs to an account
@@ -744,6 +746,35 @@ class YandexStorageApiService implements ApiService {
           );
       if (match == null) throw ApiException('Unauthorized — no account matches this session');
       match['display_name'] = trimmed;
+      return match;
+    });
+    return _userFromRow(row);
+  }
+
+  /// Keep in sync with [AppThemeOption.values]' storage keys
+  /// (lib/theme/app_theme.dart) — duplicated here rather than importing
+  /// that file so this service layer stays UI-independent.
+  static const _validProfileThemeKeys = {
+    'dark', 'amoled', 'light', 'peach', 'sky', 'purple', 'ruby', 'emerald',
+    'wood', 'clouds', 'rain', 'violet', 'pink', 'bubbles',
+  };
+
+  /// Sets the current user's public profile accent theme (see
+  /// [ApiService.setProfileTheme]).
+  @override
+  Future<AppUser> setProfileTheme(String themeKey) async {
+    if (!_validProfileThemeKeys.contains(themeKey)) {
+      throw ApiException('Unknown theme: $themeKey');
+    }
+    final user = await _currentUserRow();
+    final row = await _withCollection(_usersKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == user['id'],
+            orElse: () => null,
+          );
+      if (match == null) throw ApiException('Unauthorized — no account matches this session');
+      match['profile_theme'] = themeKey;
       return match;
     });
     return _userFromRow(row);

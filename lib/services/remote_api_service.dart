@@ -409,6 +409,17 @@ class RemoteApiService implements ApiService {
   }
 
   @override
+  Future<AppUser> setProfileTheme(String themeKey) async {
+    final res = await http.put(
+      _u('/account/profile_theme'),
+      headers: _headers,
+      body: jsonEncode({'profile_theme': themeKey}),
+    );
+    _throwIfError(res);
+    return AppUser.fromJson(jsonDecode(res.body));
+  }
+
+  @override
   Future<List<String>> fetchFeaturedTags() async {
     final res = await http.get(_u('/featured_tags'), headers: _headers);
     _throwIfError(res);

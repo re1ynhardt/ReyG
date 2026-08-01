@@ -64,6 +64,15 @@ class AppUser {
   /// profile. Empty when the user hasn't set one, in which case nothing
   /// is shown.
   final String bio;
+  /// This account's chosen accent/color theme for their PUBLIC Community
+  /// profile — a storage key from [AppThemeOption] (e.g. 'ruby', 'sky').
+  /// Unlike [AppState.themeOption] (which only changes how the app looks
+  /// to the signed-in user themselves, stored locally), this is set from
+  /// the profile screen itself and is visible to EVERY viewer of this
+  /// profile, regardless of their own local app theme. Defaults to
+  /// 'dark', matching the accent this profile header used before this
+  /// field existed.
+  final String profileTheme;
 
   const AppUser({
     required this.id,
@@ -77,6 +86,7 @@ class AppUser {
     this.bannerUrl = '',
     this.likesPrivacy = LikesPrivacy.all,
     this.bio = '',
+    this.profileTheme = 'dark',
   });
 
   factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
@@ -91,6 +101,7 @@ class AppUser {
         bannerUrl: json['banner_url'] as String? ?? '',
         likesPrivacy: json['likes_privacy'] as String? ?? LikesPrivacy.all,
         bio: json['bio'] as String? ?? '',
+        profileTheme: json['profile_theme'] as String? ?? 'dark',
       );
 
   Map<String, dynamic> toJson() => {
@@ -105,6 +116,7 @@ class AppUser {
         'banner_url': bannerUrl,
         'likes_privacy': likesPrivacy,
         'bio': bio,
+        'profile_theme': profileTheme,
       };
 
   AppUser copyWith({
@@ -113,6 +125,7 @@ class AppUser {
     String? bannerUrl,
     String? likesPrivacy,
     String? bio,
+    String? profileTheme,
   }) =>
       AppUser(
         id: id,
@@ -126,5 +139,6 @@ class AppUser {
         bannerUrl: bannerUrl ?? this.bannerUrl,
         likesPrivacy: likesPrivacy ?? this.likesPrivacy,
         bio: bio ?? this.bio,
+        profileTheme: profileTheme ?? this.profileTheme,
       );
 }

@@ -611,6 +611,24 @@ class MockApiService implements ApiService {
     return updated;
   }
 
+  static const _validProfileThemeKeys = {
+    'dark', 'amoled', 'light', 'peach', 'sky', 'purple', 'ruby', 'emerald',
+    'wood', 'clouds', 'rain', 'violet', 'pink', 'bubbles',
+  };
+
+  @override
+  Future<AppUser> setProfileTheme(String themeKey) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (!_validProfileThemeKeys.contains(themeKey)) {
+      throw ApiException('Unknown theme: $themeKey');
+    }
+    final current = _currentMockUser;
+    if (current == null) throw ApiException('Not logged in');
+    final updated = current.copyWith(profileTheme: themeKey);
+    _currentMockUser = updated;
+    return updated;
+  }
+
   @override
   Future<List<String>> fetchFeaturedTags() async {
     await Future.delayed(const Duration(milliseconds: 150));

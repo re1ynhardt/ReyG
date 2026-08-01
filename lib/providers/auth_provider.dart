@@ -171,6 +171,22 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Changes the current user's PUBLIC profile accent theme — a storage
+  /// key from [AppThemeOption] — and persists it locally. Unlike
+  /// [AppState.setTheme] this is visible to every viewer of this user's
+  /// Community profile, not just the signed-in user themselves.
+  Future<void> setProfileTheme(String themeKey) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      final updated = await _api.setProfileTheme(themeKey);
+      await _persist(updated);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
   /// Changes the current user's password. No old password is required —
   /// the request rides on the already-authenticated session. Throws
   /// [ApiException] on failure (e.g. empty password).

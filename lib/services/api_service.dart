@@ -206,6 +206,13 @@ abstract class ApiService {
   /// longer than [AppUser.displayNameMaxLength].
   Future<AppUser> setDisplayName(String displayName);
 
+  /// Sets the current user's PUBLIC profile accent theme — a storage key
+  /// from [AppThemeOption] (see lib/theme/app_theme.dart) — shown on
+  /// their Community profile to every viewer, unlike [AppState]'s local
+  /// app theme which only affects how the app looks to that user
+  /// themselves. Throws [ApiException] for an unrecognized key.
+  Future<AppUser> setProfileTheme(String themeKey);
+
   // --- Featured tags (Home screen) ----------------------------------------
   /// The 4 hashtags currently pinned to the Home screen, in display order.
   /// Same list for every account — always length 4, with `''` marking an
