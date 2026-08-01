@@ -1,6 +1,11 @@
-/// A single plain-text direct message between two accounts. No
-/// encryption — stored and transmitted as plain text, same as every other
-/// piece of user content in this app (bio, playlist names, etc).
+/// A single direct message between two accounts. [text] is always the
+/// plaintext by the time it reaches the UI — [YandexStorageApiService]
+/// (the real backend) end-to-end encrypts the message body in transit
+/// and at rest using `E2EEService`, and decrypts it again before
+/// returning a [DirectMessage] from `ApiService.fetchMessages` /
+/// `ApiService.fetchConversations`, so no UI code needs to know this
+/// happened. Other `ApiService` implementations (mock, legacy) are not
+/// in scope for this and still send plain text as-is.
 class DirectMessage {
   const DirectMessage({
     required this.id,

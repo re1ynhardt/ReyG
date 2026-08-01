@@ -53,6 +53,16 @@ dependencies:
   # lib/services/update_service.dart for the manifest change this needs.
   open_filex: ^4.5.0
 
+  # End-to-end encryption for direct messages: X25519 key agreement +
+  # AES-256-GCM (see lib/services/e2ee_service.dart). Pure-Dart, no native
+  # setup needed.
+  cryptography: ^2.7.0
+
+  # Stores this device's E2EE private key in the platform keystore/
+  # keychain (Android Keystore / iOS Keychain) instead of plain
+  # SharedPreferences — it must never leave the device.
+  flutter_secure_storage: ^9.2.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

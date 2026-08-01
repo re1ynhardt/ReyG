@@ -8,7 +8,10 @@ import '../../widgets/artist_avatar.dart';
 
 /// One DM thread between the signed-in account and [otherUserId]. Opened
 /// either from the Messages tab's conversation list or from a Community
-/// profile's Message button. Plain text only — no encryption.
+/// profile's Message button. On the real backend, messages are
+/// end-to-end encrypted in transit and at rest (see
+/// `YandexStorageApiService`'s Messages section) — this screen only
+/// ever sees plaintext, already decrypted.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
@@ -59,8 +62,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     _controller.clear();
-    await context.read<MessagesProvider>().send(otherUserId: widget.otherUserId, text: text);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    try {
+      await context.read<MessagesProvider>().send(otherUserId: widget.otherUserId, text: text);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } catch (e) {
+      if (!mounted) return;
+      _controller.text = text;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
   }
 
   @override

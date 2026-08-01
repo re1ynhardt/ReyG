@@ -263,18 +263,23 @@ abstract class ApiService {
 
   // --- Messages ---------------------------------------------------------
   /// One entry per account the current user has exchanged direct messages
-  /// with, newest conversation first. Plain text only — no encryption.
-  /// Join [ConversationSummary.otherUserId] against the Community user
-  /// list to show that conversation's name/avatar.
+  /// with, newest conversation first. Returned text is always plaintext —
+  /// implementations that encrypt at rest (the real backend) decrypt
+  /// before returning. Join [ConversationSummary.otherUserId] against the
+  /// Community user list to show that conversation's name/avatar.
   Future<List<ConversationSummary>> fetchConversations();
 
   /// Every message exchanged between the current user and [otherUserId],
-  /// oldest first.
+  /// oldest first. Returned text is always plaintext, decrypted already
+  /// where the implementation encrypts at rest.
   Future<List<DirectMessage>> fetchMessages(String otherUserId);
 
-  /// Sends a plain-text message from the current user to [recipientId]
-  /// and returns it. Throws [ApiException] if [text] is empty (after
-  /// trimming), longer than [DirectMessage.maxLength], [recipientId]
-  /// doesn't exist, or [recipientId] is the current user.
+  /// Sends a message from the current user to [recipientId] and returns
+  /// it. Throws [ApiException] if [text] is empty (after trimming),
+  /// longer than [DirectMessage.maxLength], [recipientId] doesn't exist,
+  /// or [recipientId] is the current user. Implementations that support
+  /// end-to-end encryption (the real backend) may also throw
+  /// [ApiException] if the recipient hasn't published an encryption key
+  /// yet (i.e. has never opened Messages).
   Future<DirectMessage> sendMessage({required String recipientId, required String text});
 }

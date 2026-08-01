@@ -4,7 +4,8 @@ import '../services/api_service.dart';
 
 /// Backs the Messages tab (conversation list) and the individual chat
 /// screen opened from it or from a Community profile's Message button.
-/// Plain text only — no encryption.
+/// Always deals in plaintext — encryption (on the real backend) is
+/// handled entirely inside the `ApiService` implementation.
 class MessagesProvider extends ChangeNotifier {
   MessagesProvider(this._api);
 

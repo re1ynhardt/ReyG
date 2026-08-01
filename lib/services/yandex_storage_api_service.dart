@@ -10,6 +10,7 @@ import '../models/user.dart';
 import '../models/app_notification.dart';
 import '../models/message.dart';
 import 'api_service.dart';
+import 'e2ee_service.dart';
 import 'yandex_sigv4.dart';
 
 /// [ApiService] implementation that talks DIRECTLY to Yandex Object
@@ -113,6 +114,16 @@ class YandexStorageApiService implements ApiService {
   static const _rejectedCoverExtensions = {'.gif'};
 
   String? _sessionToken;
+
+  /// The session token for which we've already confirmed this device's
+  /// E2EE public key is present on the account's row (see
+  /// [_ensurePublicKeyPublished]). Deliberately keyed by token, not a
+  /// plain bool — a bool would stay `true` forever after the first
+  /// login and silently skip publishing again when a DIFFERENT account
+  /// logs in later on the same running instance (e.g. testing sender +
+  /// recipient on one device), leaving the second account's row without
+  /// a key.
+  String? _publicKeyPublishedForToken;
 
   // --- Low-level S3 -------------------------------------------------------
   String _objectPath(String key) => '/${config.bucket}/${_encodePathSegments(key)}';
@@ -259,6 +270,7 @@ class YandexStorageApiService implements ApiService {
       return row;
     });
     _sessionToken = row['token'] as String;
+    await _ensurePublicKeyPublished();
     return _userFromRow(row);
   }
 
@@ -279,6 +291,7 @@ class YandexStorageApiService implements ApiService {
       return match;
     });
     _sessionToken = row['token'] as String;
+    await _ensurePublicKeyPublished();
     return _userFromRow(row);
   }
 
@@ -321,6 +334,13 @@ class YandexStorageApiService implements ApiService {
   @override
   void restoreSession(AppUser user) {
     _sessionToken = user.token;
+    // Covers reinstalls/new devices: the locally-generated key may not
+    // match what's on the account's row yet, or may be missing entirely
+    // if this account was created before E2EE existed. Fire-and-forget —
+    // restoreSession can't be async, and a failed publish here just
+    // means it'll be retried the next time Messages is touched.
+    // ignore: discarded_futures
+    _ensurePublicKeyPublished().catchError((_) {});
   }
 
   // --- Tracks -----------------------------------------------------------
@@ -1532,11 +1552,67 @@ class YandexStorageApiService implements ApiService {
     throw ApiException('Too many concurrent updates to artist avatars, please try again');
   }
 
-  // --- Messages ---------------------------------------------------------
-  DirectMessage _messageFromRow(Map<String, dynamic> row) => DirectMessage.fromJson(row);
+  // --- Messages -----------------------------------------------------------
+  // End-to-end encrypted: `row['text']` on the wire and in the bucket is
+  // ciphertext (see E2EEService) whenever the sender's device had the
+  // recipient's public key at send time. This section is the ONLY place
+  // in the app that encrypts/decrypts anything — every other document
+  // (tracks, playlists, bios, notifications, ...) stays plain text.
+
+  /// Makes sure this device's E2EE public key is recorded on the
+  /// current account's row so other devices can encrypt to it. Cheap to
+  /// call repeatedly — only writes when the stored key is missing or
+  /// stale, and only actually checks once per app session.
+  Future<void> _ensurePublicKeyPublished() async {
+    if (_publicKeyPublishedForToken == _sessionToken) return;
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final myPublicKey = await E2EEService.instance.publicKeyBase64(myId);
+    if (me['e2ee_pubkey'] != myPublicKey) {
+      await _withCollection(_usersKey, (data) {
+        final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+        final row = items.cast<Map<String, dynamic>?>().firstWhere(
+              (r) => r?['id'] == myId,
+              orElse: () => null,
+            );
+        row?['e2ee_pubkey'] = myPublicKey;
+        return null;
+      });
+    }
+    _publicKeyPublishedForToken = _sessionToken;
+  }
+
+  /// Public key for account [userId], or null if that account hasn't
+  /// published one yet (e.g. it hasn't opened this build of the app).
+  Future<String?> _publicKeyOf(String userId) async {
+    final usersData = await _readCollection(_usersKey);
+    final items = (usersData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final row = items.cast<Map<String, dynamic>?>().firstWhere(
+          (r) => r?['id'] == userId,
+          orElse: () => null,
+        );
+    return row?['e2ee_pubkey'] as String?;
+  }
+
+  Future<DirectMessage> _decryptRow(
+    Map<String, dynamic> row,
+    String accountId,
+    String otherPartyPublicKey,
+  ) async {
+    final rawText = row['text'] as String;
+    final text = E2EEService.instance.isEncrypted(rawText)
+        ? await E2EEService.instance.decrypt(
+            accountId: accountId,
+            stored: rawText,
+            otherPartyPublicKeyBase64: otherPartyPublicKey,
+          )
+        : rawText;
+    return DirectMessage.fromJson({...row, 'text': text});
+  }
 
   @override
   Future<List<ConversationSummary>> fetchConversations() async {
+    await _ensurePublicKeyPublished();
     final me = await _currentUserRow();
     final myId = me['id'] as String;
     final data = await _readCollection(_messagesKey);
@@ -1553,23 +1629,34 @@ class YandexStorageApiService implements ApiService {
         latestByOther[otherId] = row;
       }
     }
-    final summaries = latestByOther.entries
-        .map((e) => ConversationSummary(
-              otherUserId: e.key,
-              lastMessage: e.value['text'] as String,
-              lastMessageAt: DateTime.fromMillisecondsSinceEpoch(
-                (((e.value['created_at'] as num?) ?? 0) * 1000).round(),
-                isUtc: true,
-              ).toLocal(),
-              lastMessageFromMe: e.value['sender_id'] == myId,
-            ))
-        .toList();
+    final summaries = <ConversationSummary>[];
+    for (final e in latestByOther.entries) {
+      final otherPublicKey = await _publicKeyOf(e.key);
+      final rawText = e.value['text'] as String;
+      final text = (otherPublicKey != null && E2EEService.instance.isEncrypted(rawText))
+          ? await E2EEService.instance.decrypt(
+              accountId: myId,
+              stored: rawText,
+              otherPartyPublicKeyBase64: otherPublicKey,
+            )
+          : rawText;
+      summaries.add(ConversationSummary(
+        otherUserId: e.key,
+        lastMessage: text,
+        lastMessageAt: DateTime.fromMillisecondsSinceEpoch(
+          (((e.value['created_at'] as num?) ?? 0) * 1000).round(),
+          isUtc: true,
+        ).toLocal(),
+        lastMessageFromMe: e.value['sender_id'] == myId,
+      ));
+    }
     summaries.sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
     return summaries;
   }
 
   @override
   Future<List<DirectMessage>> fetchMessages(String otherUserId) async {
+    await _ensurePublicKeyPublished();
     final me = await _currentUserRow();
     final myId = me['id'] as String;
     final data = await _readCollection(_messagesKey);
@@ -1577,13 +1664,25 @@ class YandexStorageApiService implements ApiService {
     final between = items.where((r) =>
         (r['sender_id'] == myId && r['recipient_id'] == otherUserId) ||
         (r['sender_id'] == otherUserId && r['recipient_id'] == myId));
-    final messages = between.map(_messageFromRow).toList();
+    final otherPublicKey = await _publicKeyOf(otherUserId);
+    final messages = <DirectMessage>[];
+    for (final row in between) {
+      if (otherPublicKey == null) {
+        // No key on file for the other side (shouldn't normally happen —
+        // it's published the first time they touch Messages) — surface
+        // ciphertext rows as-is rather than guessing at a key.
+        messages.add(DirectMessage.fromJson(row));
+      } else {
+        messages.add(await _decryptRow(row, myId, otherPublicKey));
+      }
+    }
     messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return messages;
   }
 
   @override
   Future<DirectMessage> sendMessage({required String recipientId, required String text}) async {
+    await _ensurePublicKeyPublished();
     final me = await _currentUserRow();
     final myId = me['id'] as String;
     final trimmed = text.trim();
@@ -1598,24 +1697,41 @@ class YandexStorageApiService implements ApiService {
     }
     final usersData = await _readCollection(_usersKey);
     final userItems = (usersData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
-    final recipientExists = userItems.any((r) => r['id'] == recipientId);
-    if (!recipientExists) {
+    final recipientRow = userItems.cast<Map<String, dynamic>?>().firstWhere(
+          (r) => r?['id'] == recipientId,
+          orElse: () => null,
+        );
+    if (recipientRow == null) {
       throw ApiException('Recipient not found');
     }
+    final recipientPublicKey = recipientRow['e2ee_pubkey'] as String?;
+    if (recipientPublicKey == null) {
+      // Never fall back to plain text: without the recipient's key we
+      // cannot end-to-end encrypt this message, so refuse to send it
+      // instead of silently storing it unencrypted.
+      throw ApiException(
+        'This account can\'t receive encrypted messages yet — ask them to open Messages once first.',
+      );
+    }
 
+    final cipherText = await E2EEService.instance.encrypt(
+      accountId: myId,
+      plainText: trimmed,
+      otherPartyPublicKeyBase64: recipientPublicKey,
+    );
     final row = await _withCollection(_messagesKey, (data) {
       final items = data['items'] as List<dynamic>;
       final newRow = {
         'id': _randomId(),
         'sender_id': myId,
         'recipient_id': recipientId,
-        'text': trimmed,
+        'text': cipherText,
         'created_at': DateTime.now().millisecondsSinceEpoch / 1000,
       };
       items.add(newRow);
       return newRow;
     });
-    return _messageFromRow(row);
+    return DirectMessage.fromJson({...row, 'text': trimmed});
   }
 }
 
