@@ -131,8 +131,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
     // them as "artist" — an uploader can type any artist name), shown on
     // the "Artist" page.
     final uploadedTracks = library.tracks.where((t) => t.uploaderId == user.id).toList();
+    // Same owner-chosen theme _ProfileHero uses for the accent icon —
+    // apply it to the whole screen so the background (scaffold, tab
+    // bar, cards, lists) matches too, instead of only the icon.
+    final ownerTheme = AppThemeOptionX.fromStorageKey(user.profileTheme).themeData;
 
-    return Scaffold(
+    return Theme(
+      data: ownerTheme,
+      child: Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -144,17 +150,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
               icon: const Icon(Icons.palette_outlined),
               tooltip: context.tr('profile_theme'),
               onPressed: () => _pickProfileTheme(user.profileTheme),
-            ),
-          if (!isSelf)
-            IconButton(
-              icon: Icon(
-                isFavorite ? Icons.star : Icons.star_border,
-                color: isFavorite ? Colors.amber : Colors.white,
-              ),
-              tooltip: isFavorite
-                  ? context.tr('remove_user_from_favorites')
-                  : context.tr('add_user_to_favorites'),
-              onPressed: () => context.read<CommunityProvider>().toggleFavoriteUser(user.id),
             ),
           if (isDeveloper)
             IconButton(
@@ -177,6 +172,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
                     uploadedTracksCount: uploadedTracks.length,
                     playlistsCount: playlistsSnapshot.data?.length ?? 0,
                     likedTracksCount: tracksSnapshot.data?.length ?? 0,
+                    isSelf: isSelf,
+                    isSubscribed: isFavorite,
+                    onToggleSubscribe: () => context.read<CommunityProvider>().toggleFavoriteUser(user.id),
                   );
                 },
               );
@@ -197,6 +195,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
       bottomNavigationBar: hasTrack
           ? const Padding(padding: EdgeInsets.only(bottom: 6), child: MiniPlayer())
           : null,
+      ),
     );
   }
 
@@ -322,12 +321,23 @@ class _ProfileHero extends StatelessWidget {
     required this.uploadedTracksCount,
     required this.playlistsCount,
     required this.likedTracksCount,
+    required this.isSelf,
+    required this.isSubscribed,
+    required this.onToggleSubscribe,
   });
 
   final AppUser user;
   final int uploadedTracksCount;
   final int playlistsCount;
   final int likedTracksCount;
+  // Own profile doesn't get Subscribe/Message buttons — you can't
+  // subscribe to or message yourself.
+  final bool isSelf;
+  // Reuses the same favorite-user flag the old app-bar star relied on —
+  // "Subscribe" here IS the favorite-user feature, just relocated and
+  // restyled as a big button instead of a star icon.
+  final bool isSubscribed;
+  final VoidCallback onToggleSubscribe;
 
   static const _avatarRadius = 52.0;
 
@@ -386,7 +396,11 @@ class _ProfileHero extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: EdgeInsets.fromLTRB(20, topPadding + kToolbarHeight + 4, 20, 22),
+          // Trimmed from the original (topPadding + kToolbarHeight + 4) so
+          // the avatar/name/bio/stats sit a bit higher, leaving room below
+          // for the Subscribe/Message buttons within this same
+          // fixed-aspect-ratio banner.
+          padding: EdgeInsets.fromLTRB(20, topPadding + kToolbarHeight - 14, 20, 18),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -404,7 +418,7 @@ class _ProfileHero extends StatelessWidget {
                 ),
                 child: ArtistAvatar(imageUrl: user.avatarUrl, radius: _avatarRadius),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -453,7 +467,7 @@ class _ProfileHero extends StatelessWidget {
                     style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.65)),
                   ),
                 ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -464,10 +478,98 @@ class _ProfileHero extends StatelessWidget {
                   _HeroStat(value: likedTracksCount, label: context.tr('favorites')),
                 ],
               ),
+              if (!isSelf) ...[
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _HeroActionButton(
+                        label: isSubscribed ? context.tr('profile_subscribed') : context.tr('profile_subscribe'),
+                        icon: isSubscribed ? Icons.check : Icons.person_add_alt_1,
+                        filled: true,
+                        color: accent,
+                        onPressed: onToggleSubscribe,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _HeroActionButton(
+                        label: context.tr('profile_message'),
+                        icon: Icons.mail_outline,
+                        filled: false,
+                        color: Colors.white,
+                        // No functionality yet — the button is a visual
+                        // placeholder until messaging ships.
+                        onPressed: () {},
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Big pill-shaped Subscribe/Message button shown over the banner. [filled]
+/// gives a solid [color] background (used for Subscribe); otherwise it's a
+/// translucent outline (used for Message).
+class _HeroActionButton extends StatelessWidget {
+  const _HeroActionButton({
+    required this.label,
+    required this.icon,
+    required this.filled,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool filled;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: filled ? color : Colors.white.withOpacity(0.12),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onPressed,
+        child: Container(
+          height: 46,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: filled
+              ? null
+              : BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white.withOpacity(0.35)),
+                ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: filled ? onColor(color) : Colors.white),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: filled ? onColor(color) : Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

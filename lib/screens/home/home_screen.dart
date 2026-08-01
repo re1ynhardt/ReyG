@@ -6,6 +6,7 @@ import '../../services/update_service.dart';
 import '../../widgets/update_prompt.dart';
 import '../community/community_screen.dart';
 import '../library/library_screen.dart';
+import '../messages/messages_screen.dart';
 import '../player/mini_player.dart';
 import '../search/search_screen.dart';
 import '../../widgets/app_bottom_nav_bar.dart';
@@ -26,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
     SearchScreen(),
     LibraryScreen(),
     CommunityScreen(),
+    MessagesScreen(),
   ];
 
   @override
@@ -64,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
               AppNavItem(icon: Icons.search, activeIcon: Icons.search, label: context.tr('search')),
               AppNavItem(icon: Icons.library_music_outlined, activeIcon: Icons.library_music, label: context.tr('library')),
               AppNavItem(icon: Icons.groups_outlined, activeIcon: Icons.groups, label: context.tr('community')),
+              AppNavItem(icon: Icons.chat_bubble_outline, activeIcon: Icons.chat_bubble, label: context.tr('messages')),
             ],
           ),
         ],
