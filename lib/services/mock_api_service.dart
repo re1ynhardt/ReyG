@@ -497,6 +497,15 @@ class MockApiService implements ApiService {
     }
   }
 
+  /// Mock only tracks the single signed-in account's favorites, so it
+  /// can't see other accounts' choices — approximate with 1/0 based on
+  /// whether the current account favorited [userId].
+  @override
+  Future<int> fetchFavoriteUserCount(String userId) async {
+    await Future.delayed(const Duration(milliseconds: 150));
+    return _favoriteUserIds.contains(userId) ? 1 : 0;
+  }
+
   /// Developer-only (strictly). The mock backend has no persistent role
   /// flags to drift out of sync in the first place — [fetchAllUsers] and
   /// [login] already recompute `isDeveloper`/`isPerformer`/`isSupport`

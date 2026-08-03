@@ -40,6 +40,7 @@ import 'api_service.dart';
 ///   DELETE /community/users/{id}                          -> 204 (developer-only)
 ///   GET    /community/favorite_users                       -> [user_id, ...]
 ///   PUT    /community/favorite_users/{id}  {favorite: bool} -> 204
+///   GET    /community/favorite_users/{id}/count             -> {count: int}
 ///   PUT    /account/privacy     {privacy: "all"|"favorites"|"none"} -> user json
 ///   GET    /community/users/{id}/can_view                  -> {can_view: bool}
 ///   PUT    /account/password    {password: string}          -> 204 (no old password required)
@@ -330,6 +331,13 @@ class RemoteApiService implements ApiService {
       body: jsonEncode({'favorite': favorite}),
     );
     _throwIfError(res);
+  }
+
+  @override
+  Future<int> fetchFavoriteUserCount(String userId) async {
+    final res = await http.get(_u('/community/favorite_users/$userId/count'), headers: _headers);
+    _throwIfError(res);
+    return (jsonDecode(res.body) as Map<String, dynamic>)['count'] as int;
   }
 
   @override

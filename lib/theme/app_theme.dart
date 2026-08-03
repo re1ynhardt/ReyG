@@ -285,6 +285,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: Colors.white,
       colorScheme: const ColorScheme.dark(
         primary: Colors.white,
@@ -348,6 +353,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: Colors.white,
       colorScheme: const ColorScheme.dark(
         primary: Colors.white,
@@ -423,6 +433,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.light,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: Colors.black,
       colorScheme: const ColorScheme.light(
         primary: Colors.black,
@@ -481,6 +496,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.light,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: AppColors.peachAccent,
       colorScheme: const ColorScheme.light(
         primary: AppColors.peachAccent,
@@ -539,6 +559,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: AppColors.skyAccent,
       colorScheme: const ColorScheme.dark(
         primary: AppColors.skyAccent,
@@ -598,6 +623,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: AppColors.purpleAccent,
       colorScheme: const ColorScheme.dark(
         primary: AppColors.purpleAccent,
@@ -662,6 +692,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: accent,
       colorScheme: ColorScheme.dark(primary: accent, secondary: accent, surface: surface),
       cardColor: card,
@@ -723,6 +758,11 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.light,
       scaffoldBackgroundColor: bg,
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: bg,
+        modalBackgroundColor: bg,
+        showDragHandle: true,
+      ),
       primaryColor: accent,
       colorScheme: ColorScheme.light(primary: accent, secondary: accent, surface: surface),
       cardColor: card,

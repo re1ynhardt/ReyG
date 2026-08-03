@@ -12,16 +12,31 @@ class NotificationsProvider extends ChangeNotifier {
   List<AppNotification> _items = [];
   bool _loading = false;
   bool _sending = false;
+  DateTime? _lastLoadedAt;
+
+  // Short TTL: the shade is a modal that gets rebuilt from scratch every
+  // time the bell icon is tapped, so without this a user opening/closing
+  // it repeatedly within the same session re-fetches every single time.
+  // Kept short (not the usual cache duration) since stale notifications
+  // are more noticeable/confusing than stale library data.
+  static const _ttl = Duration(minutes: 2);
 
   List<AppNotification> get items => _items;
   bool get loading => _loading;
   bool get sending => _sending;
 
-  Future<void> load() async {
+  /// Loads notifications, but skips the network call if we already fetched
+  /// within [_ttl] — the shade calls this every time it's opened. Pass
+  /// [force] to always hit the network (used for pull-to-refresh).
+  Future<void> load({bool force = false}) async {
+    if (!force && _lastLoadedAt != null && DateTime.now().difference(_lastLoadedAt!) < _ttl) {
+      return;
+    }
     _loading = true;
     notifyListeners();
     try {
       _items = await _api.fetchNotifications();
+      _lastLoadedAt = DateTime.now();
     } finally {
       _loading = false;
       notifyListeners();

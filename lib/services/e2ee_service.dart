@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -146,5 +147,47 @@ class E2EEService {
     } catch (_) {
       return '\u{1F512} Encrypted message unavailable on this device';
     }
+  }
+
+  /// Same scheme as [encrypt], but for raw bytes (a voice-message
+  /// recording) instead of text — meant to be uploaded to object
+  /// storage as-is, so the object sitting in the (public-read) bucket
+  /// is opaque ciphertext that only the two participants can turn back
+  /// into audio, exactly like [encrypt] does for message text. Layout:
+  /// 12-byte nonce, then AES-GCM ciphertext, then the 16-byte tag —
+  /// all concatenated, no base64/text framing needed since this never
+  /// has to live inside JSON.
+  Future<Uint8List> encryptBytes({
+    required String accountId,
+    required List<int> plainBytes,
+    required String otherPartyPublicKeyBase64,
+  }) async {
+    final key = await _sharedKeyFor(accountId, otherPartyPublicKeyBase64);
+    final nonce = _aead.newNonce();
+    final box = await _aead.encrypt(plainBytes, secretKey: key, nonce: nonce);
+    return Uint8List.fromList([...nonce, ...box.cipherText, ...box.mac.bytes]);
+  }
+
+  /// Reverses [encryptBytes]. Throws if [cipherBytes] is malformed or
+  /// the key doesn't match — callers should catch this the same way a
+  /// failed download or a missing key is already handled (e.g. show a
+  /// "can't play this voice message" state instead of crashing).
+  Future<Uint8List> decryptBytes({
+    required String accountId,
+    required List<int> cipherBytes,
+    required String otherPartyPublicKeyBase64,
+  }) async {
+    const nonceLength = 12;
+    const macLength = 16;
+    final nonce = cipherBytes.sublist(0, nonceLength);
+    final rest = cipherBytes.sublist(nonceLength);
+    final macBytes = rest.sublist(rest.length - macLength);
+    final cipherOnly = rest.sublist(0, rest.length - macLength);
+    final key = await _sharedKeyFor(accountId, otherPartyPublicKeyBase64);
+    final clear = await _aead.decrypt(
+      SecretBox(cipherOnly, nonce: nonce, mac: Mac(macBytes)),
+      secretKey: key,
+    );
+    return Uint8List.fromList(clear);
   }
 }

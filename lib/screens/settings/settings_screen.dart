@@ -11,6 +11,7 @@ import '../../models/user.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/community_provider.dart';
+import '../../providers/messages_provider.dart';
 import '../../providers/notifications_provider.dart';
 import '../../services/update_service.dart';
 import '../../theme/app_theme.dart';
@@ -38,6 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _updatingDisplayName = false;
   bool _syncingRoles = false;
   bool _sendingNotification = false;
+  bool _wipingMessages = false;
   bool _checkingForUpdates = false;
   bool _publishingUpdate = false;
   PackageInfo? _packageInfo;
@@ -687,6 +689,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
     } finally {
       if (mounted) setState(() => _syncingRoles = false);
+    }
+  }
+
+  /// Strictly developer-only (see the `if (auth.isDeveloper)` gate
+  /// around its ListTile below). Irreversibly deletes every DM — text
+  /// and chat images alike — for every user on the bucket (see
+  /// [MessagesProvider.wipeAllMessages] / [YandexStorageApiService.
+  /// wipeAllDirectMessages]). Guarded by a typed-confirmation dialog
+  /// (not just a Cancel/Confirm choice) since this is bucket-wide and
+  /// unrecoverable — there's no "just this account" version of this.
+  Future<void> _wipeAllMessages() async {
+    final theme = Theme.of(context);
+    final confirmWord = context.tr('wipe_messages_confirm_word');
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final matches = controller.text.trim() == confirmWord;
+          return AlertDialog(
+            title: Text(context.tr('wipe_messages_confirm_title')),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(context.tr('wipe_messages_confirm_body')),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  autocorrect: false,
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: InputDecoration(
+                    hintText: context.tr('wipe_messages_confirm_hint').replaceFirst('{word}', confirmWord),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(context.tr('cancel')),
+              ),
+              TextButton(
+                onPressed: matches ? () => Navigator.of(dialogContext).pop(true) : null,
+                child: Text(
+                  context.tr('wipe_messages_confirm_action'),
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    controller.dispose();
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _wipingMessages = true);
+    try {
+      final count = await context.read<MessagesProvider>().wipeAllMessages();
+      if (!mounted) return;
+      final message = context.trOnce('wipe_messages_success').replaceFirst('{count}', '$count');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) setState(() => _wipingMessages = false);
     }
   }
 
@@ -1419,6 +1490,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: Text(context.tr('send_notification'), style: const TextStyle(fontWeight: FontWeight.w600)),
                 subtitle: Text(context.tr('send_notification_subtitle'), style: const TextStyle(fontSize: 12)),
                 onTap: _sendingNotification ? null : _sendNotification,
+              ),
+            // Strictly developer-only, and bucket-wide/irreversible — see
+            // _wipeAllMessages' doc comment. Uses the theme's error color
+            // (unlike the other developer tiles above) to visually flag
+            // that this one is destructive, not just administrative.
+            if (auth.isDeveloper)
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _wipingMessages
+                      ? const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.delete_forever_outlined, color: Colors.white),
+                ),
+                title: Text(
+                  context.tr('wipe_messages'),
+                  style: TextStyle(fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.error),
+                ),
+                subtitle: Text(context.tr('wipe_messages_subtitle'), style: const TextStyle(fontSize: 12)),
+                onTap: _wipingMessages ? null : _wipeAllMessages,
               ),
           ],
           const Divider(height: 24),

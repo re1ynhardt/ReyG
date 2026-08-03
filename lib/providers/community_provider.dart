@@ -3,6 +3,7 @@ import '../models/playlist.dart';
 import '../models/track.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
+import '../services/cache_service.dart';
 
 /// Backs the Community tab: the full list of registered users, plus a
 /// simple client-side filter by display name for the search field at the
@@ -51,13 +52,33 @@ class CommunityProvider extends ChangeNotifier {
     return [...favorites, ...rest];
   }
 
-  Future<void> loadUsers() async {
+  /// Loads the Community user list. By default, serves the on-device
+  /// cache (see [CacheService]) whenever it's still fresh — no network
+  /// call at all — so switching to the Community tab repeatedly doesn't
+  /// re-download every account's profile each time. Pass
+  /// [forceRefresh] (e.g. from pull-to-refresh) to always hit the
+  /// network and update the cache regardless of its age.
+  Future<void> loadUsers({bool forceRefresh = false}) async {
+    final cache = CacheService.instance;
+    if (!forceRefresh) {
+      final cached = await cache.getCachedUsers();
+      if (cached != null) {
+        _users = cached.users;
+        _favoriteUserIds = cached.favoriteUserIds.toSet();
+        notifyListeners();
+        if (await cache.isCommunityUsersCacheFresh()) {
+          // Cache is still within TTL — trust it, skip the network.
+          return;
+        }
+      }
+    }
     _loading = true;
     notifyListeners();
     try {
       final results = await Future.wait([_api.fetchAllUsers(), _api.fetchFavoriteUserIds()]);
       _users = results[0] as List<AppUser>;
       _favoriteUserIds = (results[1] as List<String>).toSet();
+      await cache.setCachedUsers(_users, _favoriteUserIds.toList());
     } finally {
       _loading = false;
       notifyListeners();
@@ -69,12 +90,65 @@ class CommunityProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Tracks [userId] has liked, for the Community profile screen. Not
-  /// cached on the provider — each profile view fetches fresh.
-  Future<List<Track>> fetchUserLikedTracks(String userId) => _api.fetchFavoriteTracksByUser(userId);
+  /// Tracks [userId] has liked, for the Community profile screen. Served
+  /// from the on-device cache (see [CacheService]) whenever it's still
+  /// fresh — no network call — so reopening the same profile doesn't
+  /// redownload it every time. Pass [forceRefresh] to always hit the
+  /// network (e.g. pull-to-refresh).
+  Future<List<Track>> fetchUserLikedTracks(String userId, {bool forceRefresh = false}) async {
+    final bundle = await _profileBundle(userId, forceRefresh: forceRefresh);
+    return bundle.tracks;
+  }
 
-  /// Playlists owned by [userId], for the Community profile screen.
-  Future<List<Playlist>> fetchUserPlaylists(String userId) => _api.fetchPlaylistsByUser(userId);
+  /// Playlists owned by [userId], for the Community profile screen. Same
+  /// on-device caching as [fetchUserLikedTracks].
+  Future<List<Playlist>> fetchUserPlaylists(String userId, {bool forceRefresh = false}) async {
+    final bundle = await _profileBundle(userId, forceRefresh: forceRefresh);
+    return bundle.playlists;
+  }
+
+  /// Number of accounts that have favorited [userId] — their fan count,
+  /// shown as the "Favorites" stat on the Community profile screen. Same
+  /// on-device caching as [fetchUserLikedTracks].
+  Future<int> fetchFavoriteUserCount(String userId, {bool forceRefresh = false}) async {
+    final bundle = await _profileBundle(userId, forceRefresh: forceRefresh);
+    return bundle.favoriteUserCount;
+  }
+
+  /// Backs [fetchUserLikedTracks]/[fetchUserPlaylists]/[fetchFavoriteUserCount]:
+  /// all three are always requested together by the Community profile
+  /// screen, so they're fetched and cached together too, under one TTL
+  /// per profile — reopening the same profile within that window costs
+  /// zero network calls instead of three.
+  Future<({List<Track> tracks, List<Playlist> playlists, int favoriteUserCount})> _profileBundle(
+    String userId, {
+    bool forceRefresh = false,
+  }) async {
+    final cache = CacheService.instance;
+    if (!forceRefresh) {
+      final cached = await cache.getCachedProfile(userId);
+      if (cached != null && await cache.isProfileCacheFresh(userId)) {
+        return cached;
+      }
+    }
+    final results = await Future.wait([
+      _api.fetchFavoriteTracksByUser(userId),
+      _api.fetchPlaylistsByUser(userId),
+      _api.fetchFavoriteUserCount(userId),
+    ]);
+    final bundle = (
+      tracks: results[0] as List<Track>,
+      playlists: results[1] as List<Playlist>,
+      favoriteUserCount: results[2] as int,
+    );
+    await cache.setCachedProfile(
+      userId,
+      tracks: bundle.tracks,
+      playlists: bundle.playlists,
+      favoriteUserCount: bundle.favoriteUserCount,
+    );
+    return bundle;
+  }
 
   /// Whether the signed-in user is allowed to see [userId]'s liked
   /// tracks and playlists, per that account's privacy setting. The
@@ -90,6 +164,8 @@ class CommunityProvider extends ChangeNotifier {
     _users = _users.where((u) => u.id != userId).toList();
     _favoriteUserIds.remove(userId);
     notifyListeners();
+    await CacheService.instance.setCachedUsers(_users, _favoriteUserIds.toList());
+    await CacheService.instance.clearCachedProfile(userId);
   }
 
   /// Developer-only. Sets [userId]'s password without requiring their
@@ -105,7 +181,7 @@ class CommunityProvider extends ChangeNotifier {
   /// Returns the number of accounts whose role actually changed.
   Future<int> syncAccountRoles() async {
     final updated = await _api.syncAccountRoles();
-    await loadUsers();
+    await loadUsers(forceRefresh: true);
     return updated;
   }
 
@@ -141,6 +217,7 @@ class CommunityProvider extends ChangeNotifier {
     notifyListeners();
     try {
       await _api.setFavoriteUser(userId: userId, favorite: nowFavorite);
+      await CacheService.instance.setCachedUsers(_users, _favoriteUserIds.toList());
     } catch (e) {
       if (nowFavorite) {
         _favoriteUserIds.remove(userId);

@@ -168,7 +168,36 @@ class LibraryProvider extends ChangeNotifier {
     return null;
   }
 
-  Future<void> loadAll() async {
+  /// Loads the full catalog (tracks, playlists, favorites, featured tags,
+  /// artist avatars) plus on-device-only bits (recently played, search
+  /// history). By default, serves the on-device cache (see
+  /// [CacheService]) whenever it's still fresh — no network call at all —
+  /// so a cold start doesn't re-download the whole catalog every time.
+  /// Pass [forceRefresh] (e.g. from pull-to-refresh) to always hit the
+  /// network and update the cache regardless of its age.
+  Future<void> loadAll({bool forceRefresh = false}) async {
+    final cache = CacheService.instance;
+    if (!forceRefresh) {
+      final cached = await cache.getCachedLibraryCatalog();
+      if (cached != null) {
+        _tracks = cached.tracks;
+        _playlists = cached.playlists;
+        _favoriteIds = cached.favoriteIds;
+        _featuredTags = cached.featuredTags;
+        _artistAvatars = cached.artistAvatars;
+        _cachedRecommendations = null;
+        notifyListeners();
+        if (await cache.isLibraryCatalogCacheFresh()) {
+          // Cache is still within TTL — trust it, skip the network. Still
+          // pick up the latest recently-played/search-history though,
+          // since those are on-device-only and cost nothing to refresh.
+          _recentlyPlayedIds = await cache.getRecentlyPlayed();
+          _searchHistory = await cache.getSearchHistory();
+          notifyListeners();
+          return;
+        }
+      }
+    }
     _loading = true;
     notifyListeners();
     try {
@@ -189,6 +218,13 @@ class LibraryProvider extends ChangeNotifier {
       _featuredTags = results[5] as List<String>;
       _artistAvatars = results[6] as Map<String, String>;
       _cachedRecommendations = null; // catalog changed — recompute next access
+      await cache.setCachedLibraryCatalog(
+        tracks: _tracks,
+        playlists: _playlists,
+        favoriteIds: _favoriteIds,
+        featuredTags: _featuredTags,
+        artistAvatars: _artistAvatars,
+      );
     } finally {
       _loading = false;
       notifyListeners();
@@ -241,6 +277,21 @@ class LibraryProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-persists the current in-memory catalog fields to the on-device
+  /// cache (see [loadAll]) — called after any local mutation to those
+  /// fields so the disk cache doesn't go stale/inconsistent for the rest
+  /// of [CacheService.libraryCatalogTtl] (e.g. a track deleted mid-TTL
+  /// would otherwise reappear on a cold start until the cache expired).
+  Future<void> _persistCatalogCache() {
+    return CacheService.instance.setCachedLibraryCatalog(
+      tracks: _tracks,
+      playlists: _playlists,
+      favoriteIds: _favoriteIds,
+      featuredTags: _featuredTags,
+      artistAvatars: _artistAvatars,
+    );
+  }
+
   Future<void> toggleFavorite(String trackId) async {
     final isFav = _favoriteIds.contains(trackId);
     if (isFav) {
@@ -250,6 +301,7 @@ class LibraryProvider extends ChangeNotifier {
     }
     notifyListeners();
     await _api.setFavorite(trackId: trackId, favorite: !isFav);
+    await _persistCatalogCache();
   }
 
   bool isFavorite(String trackId) => _favoriteIds.contains(trackId);
@@ -258,7 +310,28 @@ class LibraryProvider extends ChangeNotifier {
     final playlist = await _api.createPlaylist(name);
     _playlists = [..._playlists, playlist];
     notifyListeners();
+    await _persistCatalogCache();
     return playlist;
+  }
+
+  /// Creates a new playlist named [name] in the current account's library
+  /// and adds each of [trackIds] to it, in order — used to duplicate a
+  /// playlist shared as a chat attachment into the recipient's own
+  /// library. Reuses [createPlaylist]/[addToPlaylist] so local state and
+  /// the backend stay in sync exactly as they would for a manually
+  /// created playlist. Track ids that fail to add (e.g. deleted since the
+  /// message was sent) are skipped rather than aborting the whole copy.
+  Future<Playlist> duplicatePlaylist({required String name, required List<String> trackIds}) async {
+    final playlist = await createPlaylist(name);
+    for (final trackId in trackIds) {
+      try {
+        await addToPlaylist(playlist.id, trackId);
+      } catch (_) {
+        // Skip tracks that no longer exist / can't be added; the rest of
+        // the copy should still go through.
+      }
+    }
+    return _playlists.firstWhere((p) => p.id == playlist.id, orElse: () => playlist);
   }
 
   /// Renames [playlistId] and updates local state so the new name is
@@ -271,6 +344,7 @@ class LibraryProvider extends ChangeNotifier {
     if (idx != -1) {
       _playlists[idx] = updated;
       notifyListeners();
+      await _persistCatalogCache();
     }
   }
 
@@ -282,6 +356,7 @@ class LibraryProvider extends ChangeNotifier {
         trackIds: [..._playlists[idx].trackIds, trackId],
       );
       notifyListeners();
+      await _persistCatalogCache();
     }
   }
 
@@ -293,6 +368,7 @@ class LibraryProvider extends ChangeNotifier {
         trackIds: _playlists[idx].trackIds.where((id) => id != trackId).toList(),
       );
       notifyListeners();
+      await _persistCatalogCache();
     }
   }
 
@@ -300,6 +376,7 @@ class LibraryProvider extends ChangeNotifier {
     await _api.deletePlaylist(playlistId);
     _playlists = _playlists.where((p) => p.id != playlistId).toList();
     notifyListeners();
+    await _persistCatalogCache();
   }
 
   /// Uploads a new cover image for [playlistId] and updates local state
@@ -313,6 +390,7 @@ class LibraryProvider extends ChangeNotifier {
     if (idx != -1) {
       _playlists[idx] = updated;
       notifyListeners();
+      await _persistCatalogCache();
     }
   }
 
@@ -324,6 +402,7 @@ class LibraryProvider extends ChangeNotifier {
     if (idx != -1) {
       _playlists[idx] = updated;
       notifyListeners();
+      await _persistCatalogCache();
     }
   }
 
@@ -343,6 +422,7 @@ class LibraryProvider extends ChangeNotifier {
     );
     _tracks = [track, ..._tracks];
     notifyListeners();
+    await _persistCatalogCache();
     return track;
   }
 
@@ -357,6 +437,7 @@ class LibraryProvider extends ChangeNotifier {
     _tracks = _tracks.map((t) => t.id == trackId ? updated : t).toList();
     _searchResults = _searchResults.map((t) => t.id == trackId ? updated : t).toList();
     notifyListeners();
+    await _persistCatalogCache();
   }
 
   /// Any signed-in user can call this. Throws [ApiException] if the
@@ -367,6 +448,7 @@ class LibraryProvider extends ChangeNotifier {
     _tracks = _tracks.map((t) => t.id == trackId ? updated : t).toList();
     _searchResults = _searchResults.map((t) => t.id == trackId ? updated : t).toList();
     notifyListeners();
+    await _persistCatalogCache();
   }
 
   /// Admin/developer accounts only — throws [ApiException] for anyone
@@ -377,6 +459,7 @@ class LibraryProvider extends ChangeNotifier {
     _tracks = _tracks.map((t) => t.id == trackId ? updated : t).toList();
     _searchResults = _searchResults.map((t) => t.id == trackId ? updated : t).toList();
     notifyListeners();
+    await _persistCatalogCache();
   }
 
   /// Developer-only. Removes the track everywhere at once: the main
@@ -394,6 +477,7 @@ class LibraryProvider extends ChangeNotifier {
         .toList();
     _searchResults = _searchResults.where((t) => t.id != trackId).toList();
     notifyListeners();
+    await _persistCatalogCache();
   }
 
   /// Developer-only. Updates the 4 hashtags featured on every account's
@@ -404,6 +488,7 @@ class LibraryProvider extends ChangeNotifier {
     final updated = await _api.setFeaturedTags(tags);
     _featuredTags = updated;
     notifyListeners();
+    await _persistCatalogCache();
   }
 
   /// Developer-only. Uploads a new avatar image for [artist] and updates
@@ -416,6 +501,7 @@ class LibraryProvider extends ChangeNotifier {
     final url = await _api.uploadArtistAvatar(artist: artist, localImagePath: localImagePath);
     _artistAvatars = {..._artistAvatars, artist: url};
     notifyListeners();
+    await _persistCatalogCache();
   }
 
   /// Developer-only. Clears [artist]'s custom avatar, reverting the UI
@@ -425,5 +511,6 @@ class LibraryProvider extends ChangeNotifier {
     await _api.removeArtistAvatar(artist);
     _artistAvatars = {..._artistAvatars}..remove(artist);
     notifyListeners();
+    await _persistCatalogCache();
   }
 }

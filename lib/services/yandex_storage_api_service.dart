@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
@@ -100,16 +101,32 @@ class YandexStorageApiService implements ApiService {
   static const _artistAvatarsKey = 'db/artist_avatars.json';
   static const _messagesKey = 'db/messages.json';
   static const _messageReadsKey = 'db/message_reads.json';
+  // Deliberately NOT part of the E2EE message payload — DM text (and the
+  // attachment JSON riding inside it, see message_attachment.dart) is
+  // encrypted so only the two participants can read it, which means a
+  // developer/support account deleting a user can't decrypt their
+  // conversations to discover which chat images belong to them. This
+  // small, unencrypted collection just records "this object URL was
+  // uploaded by this account as a chat image", so deleteUserAccount can
+  // find and remove those files from the bucket without needing to read
+  // anyone's messages. It carries no message content, only ownership.
+  static const _chatAttachmentsKey = 'db/chat_attachments.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
   static const _avatarsPrefix = 'media/avatars/';
   static const _bannersPrefix = 'media/banners/';
   static const _artistAvatarsPrefix = 'media/artist_avatars/';
   static const _lyricsPrefix = 'media/lyrics/';
+  static const _chatImagesPrefix = 'media/chat_images/';
+  static const _chatVoicePrefix = 'media/chat_voice/';
   static const _maxRetries = 8;
   static const _maxAvatarBytes = 5 * 1024 * 1024;
   static const _maxBannerBytes = 10 * 1024 * 1024;
   static const _maxCoverBytes = 5 * 1024 * 1024;
+  // Ciphertext is a little larger than the source recording (12-byte
+  // nonce + 16-byte GCM tag), but that's negligible next to this cap —
+  // generous enough for several minutes of compressed audio.
+  static const _maxVoiceBytes = 15 * 1024 * 1024;
   // Any image format is accepted for playlist covers except GIF (avoids
   // animated covers rendering oddly in fixed-size artwork slots).
   static const _rejectedCoverExtensions = {'.gif'};
@@ -146,6 +163,26 @@ class YandexStorageApiService implements ApiService {
     return (bytes: res.bodyBytes, etag: etag);
   }
 
+  /// Session-scoped in-memory cache of GETs, keyed by object key — avoids
+  /// re-downloading the same `db/*.json` blob (users, tracks, playlists,
+  /// messages, ...) on every read within a session, since these only
+  /// change when this app itself writes to them. Populated/served only
+  /// by [_getObjectCached] (used for plain reads); [_withCollection] and
+  /// the other optimistic-write loops below deliberately keep calling
+  /// [_getObject] directly for their initial read, since their ETag-based
+  /// concurrency check needs the real current state, not a possibly-stale
+  /// cached one. Every one of those write paths updates this cache with
+  /// the freshly-written bytes/etag right after a successful PUT, so
+  /// reads immediately after a write are still cache-consistent.
+  final Map<String, ({List<int> bytes, String? etag})?> _objectCache = {};
+
+  Future<({List<int> bytes, String? etag})?> _getObjectCached(String key) async {
+    if (_objectCache.containsKey(key)) return _objectCache[key];
+    final obj = await _getObject(key);
+    _objectCache[key] = obj;
+    return obj;
+  }
+
   /// Puts an object. If [ifMatch] is set, only succeeds when the object's
   /// current ETag still equals it. If [createOnly] is true, only succeeds
   /// when no object currently exists at this key. Throws
@@ -180,10 +217,22 @@ class YandexStorageApiService implements ApiService {
   }
 
   // --- JSON collections with optimistic concurrency ------------------------
-  Future<Map<String, dynamic>> _readCollection(String key) async {
-    final obj = await _getObject(key);
+  /// [bypassCache] forces a fresh GET instead of serving [_getObjectCached]'s
+  /// session-scoped copy — required for collections another account can
+  /// write to (messages, read receipts) where a stale in-memory copy would
+  /// silently hide their writes for the rest of the session. The fresh
+  /// result still repopulates the cache, so other (same-session) readers of
+  /// this key benefit from it until the next bypassed read.
+  Future<Map<String, dynamic>> _readCollection(String key, {bool bypassCache = false}) async {
+    final obj = bypassCache ? await _getObjectFresh(key) : await _getObjectCached(key);
     if (obj == null) return {'items': <dynamic>[]};
     return jsonDecode(utf8.decode(obj.bytes)) as Map<String, dynamic>;
+  }
+
+  Future<({List<int> bytes, String? etag})?> _getObjectFresh(String key) async {
+    final obj = await _getObject(key);
+    _objectCache[key] = obj;
+    return obj;
   }
 
   /// Read-modify-write a JSON collection. `mutate` receives the current
@@ -201,11 +250,13 @@ class YandexStorageApiService implements ApiService {
       final result = mutate(data);
       final body = utf8.encode(jsonEncode(data));
       try {
+        final String newEtag;
         if (obj == null) {
-          await _putObject(key, body, contentType: 'application/json', createOnly: true);
+          newEtag = await _putObject(key, body, contentType: 'application/json', createOnly: true);
         } else {
-          await _putObject(key, body, contentType: 'application/json', ifMatch: obj.etag);
+          newEtag = await _putObject(key, body, contentType: 'application/json', ifMatch: obj.etag);
         }
+        _objectCache[key] = (bytes: body, etag: newEtag);
         return result;
       } on _ConflictException {
         await Future.delayed(Duration(milliseconds: (50 * (1 << attempt)).clamp(0, 1000)) +
@@ -846,11 +897,17 @@ class YandexStorageApiService implements ApiService {
     return items.where((r) => r['owner_id'] == userId).map(_playlistFromRow).toList();
   }
 
-  /// Developer-only. Deletes [userId]'s account row, every playlist it
-  /// owns (best-effort deleting their cover objects too), every
-  /// favorites entry it made, and its avatar file. Tracks it may have
-  /// uploaded are left in the shared catalog — this only removes the
-  /// account and things that belong solely to it.
+  /// Developer-only. Wipes [userId] out of the bucket as completely as
+  /// the data model allows: the account row itself, every playlist it
+  /// owns (+ their cover objects), every favorites/favorite-user entry
+  /// involving it, its avatar and banner objects, every direct message
+  /// it sent or received in either direction (+ read receipts), and
+  /// every chat image it ever uploaded (tracked via
+  /// [_chatAttachmentsKey] specifically so this step doesn't depend on
+  /// decrypting anyone's E2EE messages — see that constant's doc
+  /// comment). Tracks it may have uploaded to the shared catalog are
+  /// left alone — those aren't "this account's data" in the same sense,
+  /// other people may have them favorited/in playlists.
   @override
   Future<void> deleteUserAccount(String userId) async {
     final caller = await _currentUserRow();
@@ -859,11 +916,13 @@ class YandexStorageApiService implements ApiService {
     }
 
     String? avatarUrl;
+    String? bannerUrl;
     await _withCollection(_usersKey, (data) {
       final items = data['items'] as List<dynamic>;
       final idx = items.indexWhere((r) => (r as Map)['id'] == userId);
       if (idx == -1) throw ApiException('Account not found');
       avatarUrl = (items[idx] as Map)['avatar_url'] as String?;
+      bannerUrl = (items[idx] as Map)['banner_url'] as String?;
       items.removeAt(idx);
       return null;
     });
@@ -895,10 +954,43 @@ class YandexStorageApiService implements ApiService {
       return null;
     });
 
-    // Best-effort cleanup of files — the account/playlist metadata is
-    // already gone either way, so a failure here shouldn't surface as an
-    // error to the UI.
-    for (final url in [avatarUrl, ...coverUrls]) {
+    // Every DM this account sent or received, in either direction —
+    // deleting the account row alone would otherwise leave the other
+    // party's conversation with a message thread from a ghost id.
+    await _withCollection(_messagesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.removeWhere(
+          (r) => (r as Map)['sender_id'] == userId || r['recipient_id'] == userId);
+      return null;
+    });
+
+    // Read receipts this account owns, and other accounts' receipts
+    // that reference it as the other party.
+    await _withCollection(_messageReadsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.removeWhere(
+          (r) => (r as Map)['reader_id'] == userId || r['other_user_id'] == userId);
+      return null;
+    });
+
+    // Every chat image this account uploaded — see _chatAttachmentsKey's
+    // doc comment for why this can't just be read out of the (E2EE)
+    // message rows above.
+    final chatImageUrls = <String?>[];
+    await _withCollection(_chatAttachmentsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final owned = items.where((r) => (r as Map)['uploader_id'] == userId);
+      for (final r in owned) {
+        chatImageUrls.add((r as Map)['url'] as String?);
+      }
+      items.removeWhere((r) => (r as Map)['uploader_id'] == userId);
+      return null;
+    });
+
+    // Best-effort cleanup of files — the account/playlist/message
+    // metadata is already gone either way, so a failure here shouldn't
+    // surface as an error to the UI.
+    for (final url in [avatarUrl, bannerUrl, ...coverUrls, ...chatImageUrls]) {
       final key = _keyFromPublicUrl(url);
       if (key == null) continue;
       try {
@@ -919,6 +1011,16 @@ class YandexStorageApiService implements ApiService {
     final data = await _readCollection(_favoriteUsersKey);
     final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     return items.where((r) => r['user_id'] == user['id']).map((r) => r['favorite_user_id'] as String).toList();
+  }
+
+  /// Number of accounts that have added [userId] to their favorites —
+  /// counts rows in [_favoriteUsersKey] on the *other* side of the
+  /// `{user_id, favorite_user_id}` pair from [fetchFavoriteUserIds].
+  @override
+  Future<int> fetchFavoriteUserCount(String userId) async {
+    final data = await _readCollection(_favoriteUsersKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    return items.where((r) => r['favorite_user_id'] == userId).length;
   }
 
   @override
@@ -1137,6 +1239,115 @@ class YandexStorageApiService implements ApiService {
     }
   }
 
+  /// Lists every object key under [prefix], transparently paging through
+  /// ListObjectsV2's `NextContinuationToken` until `IsTruncated` is
+  /// false. Parsed with plain regex rather than an XML package — S3's
+  /// ListBucketResult is a shallow, non-nested list of `<Key>` (+
+  /// `<NextContinuationToken>`) elements, so a full XML parser would be
+  /// pure overhead for what this needs.
+  Future<List<String>> _listAllKeys(String prefix) async {
+    final keys = <String>[];
+    String? continuationToken;
+    do {
+      final params = <String, String>{
+        'list-type': '2',
+        'prefix': prefix,
+        'max-keys': '1000',
+        if (continuationToken != null) 'continuation-token': continuationToken,
+      };
+      final canonicalQuery = YandexSigV4.buildCanonicalQuery(params);
+      final bucketPath = '/${config.bucket}';
+      final headers = _signer.signedHeaders(
+        method: 'GET',
+        canonicalPath: bucketPath,
+        body: const [],
+        canonicalQueryString: canonicalQuery,
+      );
+      final uri = Uri.parse('https://${config.endpointHost}$bucketPath?$canonicalQuery');
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode >= 400) {
+        throw ApiException('Yandex Storage ListObjectsV2 failed (${res.statusCode}): ${res.body}');
+      }
+      final body = res.body;
+      keys.addAll(
+        RegExp(r'<Key>(.*?)</Key>', dotAll: true)
+            .allMatches(body)
+            .map((m) => Uri.decodeComponent(m.group(1)!)),
+      );
+      final truncated = RegExp(r'<IsTruncated>true</IsTruncated>').hasMatch(body);
+      continuationToken = truncated
+          ? RegExp(r'<NextContinuationToken>(.*?)</NextContinuationToken>', dotAll: true)
+              .firstMatch(body)
+              ?.group(1)
+          : null;
+    } while (continuationToken != null);
+    return keys;
+  }
+
+  /// Deletes every object under [prefix]. Best-effort per key — one
+  /// failure doesn't stop the rest from being attempted. Returns how
+  /// many were successfully deleted.
+  Future<int> _deleteAllObjectsWithPrefix(String prefix) async {
+    final keys = await _listAllKeys(prefix);
+    var deleted = 0;
+    for (final key in keys) {
+      try {
+        await _deleteObject(key);
+        deleted++;
+      } catch (_) {
+        // Non-fatal — keep going, the caller cares about "as much as
+        // possible got cleaned up", not "all-or-nothing".
+      }
+    }
+    return deleted;
+  }
+
+  /// Developer-only. Wipes every direct-message conversation for every
+  /// user, bucket-wide: the entire `messages` and `message_reads`
+  /// collections (all text — including attachment JSON riding inside
+  /// message text, see message_attachment.dart), the
+  /// `chat_attachments` ownership manifest, and — critically — every
+  /// actual object under `media/chat_images/` and `media/chat_voice/`
+  /// in the bucket itself, not just the ones the manifest happens to
+  /// know about (that manifest only started being written after
+  /// chat-attachment ownership tracking was added, so this sweeps the
+  /// real prefixes directly to also catch anything uploaded before that
+  /// and guarantee nothing is left behind).
+  /// There is no per-conversation or per-user selectivity here — this
+  /// is a full reset of every private message on the bucket, for
+  /// reclaiming storage. Irreversible.
+  Future<int> wipeAllDirectMessages() async {
+    final caller = await _currentUserRow();
+    if (caller['is_developer'] != true) {
+      throw ApiException('Only developer accounts can wipe all messages');
+    }
+
+    var messageCount = 0;
+    await _withCollection(_messagesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      messageCount = items.length;
+      items.clear();
+      return null;
+    });
+
+    await _withCollection(_messageReadsKey, (data) {
+      (data['items'] as List<dynamic>).clear();
+      return null;
+    });
+
+    await _withCollection(_chatAttachmentsKey, (data) {
+      (data['items'] as List<dynamic>).clear();
+      return null;
+    });
+
+    // Sweep the actual prefixes rather than trusting the manifest alone —
+    // see the doc comment above.
+    await _deleteAllObjectsWithPrefix(_chatImagesPrefix);
+    await _deleteAllObjectsWithPrefix(_chatVoicePrefix);
+
+    return messageCount;
+  }
+
   // --- Playlists --------------------------------------------------------
   @override
   Future<List<Playlist>> fetchPlaylists() async {
@@ -1337,7 +1548,7 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<List<String>> fetchFeaturedTags() async {
     await _currentUserRow();
-    final obj = await _getObject(_featuredTagsKey);
+    final obj = await _getObjectCached(_featuredTagsKey);
     if (obj == null) return List<String>.filled(4, '');
     final decoded = (jsonDecode(utf8.decode(obj.bytes)) as List<dynamic>).cast<String>();
     final tags = List<String>.generate(4, (i) => i < decoded.length ? decoded[i] : '');
@@ -1369,11 +1580,13 @@ class YandexStorageApiService implements ApiService {
       final obj = await _getObject(_featuredTagsKey);
       final body = utf8.encode(jsonEncode(cleaned));
       try {
+        final String newEtag;
         if (obj == null) {
-          await _putObject(_featuredTagsKey, body, contentType: 'application/json', createOnly: true);
+          newEtag = await _putObject(_featuredTagsKey, body, contentType: 'application/json', createOnly: true);
         } else {
-          await _putObject(_featuredTagsKey, body, contentType: 'application/json', ifMatch: obj.etag);
+          newEtag = await _putObject(_featuredTagsKey, body, contentType: 'application/json', ifMatch: obj.etag);
         }
+        _objectCache[_featuredTagsKey] = (bytes: body, etag: newEtag);
         return cleaned;
       } on _ConflictException {
         await Future.delayed(Duration(milliseconds: (50 * (1 << attempt)).clamp(0, 1000)) +
@@ -1448,7 +1661,7 @@ class YandexStorageApiService implements ApiService {
   @override
   Future<Map<String, String>> fetchArtistAvatars() async {
     await _currentUserRow();
-    final obj = await _getObject(_artistAvatarsKey);
+    final obj = await _getObjectCached(_artistAvatarsKey);
     if (obj == null) return {};
     final decoded = jsonDecode(utf8.decode(obj.bytes)) as Map<String, dynamic>;
     return decoded.map((k, v) => MapEntry(k, v as String));
@@ -1484,11 +1697,13 @@ class YandexStorageApiService implements ApiService {
       data[artist] = avatarUrl;
       final body = utf8.encode(jsonEncode(data));
       try {
+        final String newEtag;
         if (obj == null) {
-          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', createOnly: true);
+          newEtag = await _putObject(_artistAvatarsKey, body, contentType: 'application/json', createOnly: true);
         } else {
-          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', ifMatch: obj.etag);
+          newEtag = await _putObject(_artistAvatarsKey, body, contentType: 'application/json', ifMatch: obj.etag);
         }
+        _objectCache[_artistAvatarsKey] = (bytes: body, etag: newEtag);
         // Best-effort cleanup of the previous avatar so old images don't
         // pile up in the bucket forever. Non-fatal: the new avatar is
         // already saved either way.
@@ -1530,11 +1745,13 @@ class YandexStorageApiService implements ApiService {
       data.remove(artist);
       final body = utf8.encode(jsonEncode(data));
       try {
+        final String newEtag;
         if (obj == null) {
-          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', createOnly: true);
+          newEtag = await _putObject(_artistAvatarsKey, body, contentType: 'application/json', createOnly: true);
         } else {
-          await _putObject(_artistAvatarsKey, body, contentType: 'application/json', ifMatch: obj.etag);
+          newEtag = await _putObject(_artistAvatarsKey, body, contentType: 'application/json', ifMatch: obj.etag);
         }
+        _objectCache[_artistAvatarsKey] = (bytes: body, etag: newEtag);
         final oldKey = _keyFromPublicUrl(oldAvatarUrl);
         if (oldKey != null) {
           try {
@@ -1551,6 +1768,124 @@ class YandexStorageApiService implements ApiService {
       }
     }
     throw ApiException('Too many concurrent updates to artist avatars, please try again');
+  }
+
+  /// Uploads an image to be sent as a chat attachment and returns its
+  /// public URL, using the same size/format rules as playlist covers.
+  /// Deliberately NOT part of the [ApiService] interface — sending
+  /// images is Yandex Storage-only for now (see
+  /// [MessagesProvider.uploadImageAttachment], which type-checks for
+  /// this concrete class), so the mock and legacy backends don't need a
+  /// stub implementation. The message referencing the returned URL still
+  /// goes through the normal E2EE `sendMessage` pipeline unchanged (see
+  /// message_attachment.dart) — only the image bytes themselves land in
+  /// public object storage, same trust level as track/playlist covers.
+  Future<String> uploadChatImage(String localImagePath) async {
+    final me = await _currentUserRow();
+    final file = File(localImagePath);
+    final sizeBytes = await file.length();
+    if (sizeBytes > _maxCoverBytes) {
+      throw ApiException('Image is too large — max 5 MB');
+    }
+    final dotIndex = localImagePath.lastIndexOf('.');
+    final ext = dotIndex == -1 ? '' : localImagePath.substring(dotIndex).toLowerCase();
+    if (_rejectedCoverExtensions.contains(ext)) {
+      throw ApiException('GIFs are not supported for chat images');
+    }
+    final url = await _uploadMediaFile(localImagePath, _chatImagesPrefix);
+    await _withCollection(_chatAttachmentsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.add({
+        'url': url,
+        'uploader_id': me['id'],
+        'created_at': DateTime.now().millisecondsSinceEpoch / 1000,
+      });
+      return null;
+    });
+    return url;
+  }
+
+  /// Uploads a voice-message recording and returns its public URL.
+  /// Unlike [uploadChatImage] (where only the *pointer* to the image is
+  /// protected — the image bytes themselves sit in the bucket same as
+  /// any playlist cover), the recording is encrypted client-side with
+  /// [E2EEService.encryptBytes] using the same per-conversation shared
+  /// key as message text, BEFORE it ever leaves the device. What lands
+  /// in the (public-read) bucket is opaque AES-256-GCM ciphertext, so
+  /// nobody who only has bucket/URL access — a network observer,
+  /// whoever administers the storage account, anyone who guesses the
+  /// key — can play it back; only [recipientId] and this account can
+  /// derive the key that decrypts it (see [downloadChatVoice]).
+  /// Deliberately NOT part of [ApiService], for the same reason as
+  /// [uploadChatImage] — see [MessagesProvider.uploadVoiceAttachment].
+  Future<String> uploadChatVoice(String localAudioPath, {required String recipientId}) async {
+    await _ensurePublicKeyPublished();
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final file = File(localAudioPath);
+    final sizeBytes = await file.length();
+    if (sizeBytes > _maxVoiceBytes) {
+      throw ApiException('Voice message is too long');
+    }
+    final recipientPublicKey = await _publicKeyOf(recipientId);
+    if (recipientPublicKey == null) {
+      // Same rule as sendMessage: never let a voice message land
+      // unencrypted just because we don't have a key on file yet.
+      throw ApiException(
+        'This account can\'t receive encrypted messages yet — ask them to open Messages once first.',
+      );
+    }
+    final plainBytes = await file.readAsBytes();
+    final cipherBytes = await E2EEService.instance.encryptBytes(
+      accountId: myId,
+      plainBytes: plainBytes,
+      otherPartyPublicKeyBase64: recipientPublicKey,
+    );
+    final key = '$_chatVoicePrefix${_randomId()}.bin';
+    await _putObject(
+      key,
+      cipherBytes,
+      // Opaque ciphertext, not a playable audio file — an accurate
+      // content-type here would be misleading (and player apps that
+      // auto-preview by content-type would just choke on it anyway).
+      contentType: 'application/octet-stream',
+      publicRead: true,
+    );
+    final url = 'https://${config.endpointHost}/${config.bucket}/$key';
+    await _withCollection(_chatAttachmentsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.add({
+        'url': url,
+        'uploader_id': myId,
+        'created_at': DateTime.now().millisecondsSinceEpoch / 1000,
+      });
+      return null;
+    });
+    return url;
+  }
+
+  /// Downloads and decrypts a voice-message attachment previously
+  /// uploaded via [uploadChatVoice], returning the raw decrypted audio
+  /// bytes ready to write to a local temp file and hand to a player.
+  /// [otherUserId] is whoever the OTHER side of that conversation is
+  /// (regardless of whether this account sent or received the
+  /// recording — ECDH is symmetric, see [E2EEService]).
+  Future<Uint8List> downloadChatVoice(String url, {required String otherUserId}) async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final otherPublicKey = await _publicKeyOf(otherUserId);
+    if (otherPublicKey == null) {
+      throw ApiException('Cannot decrypt this voice message on this device');
+    }
+    final res = await http.get(Uri.parse(url));
+    if (res.statusCode >= 400) {
+      throw ApiException('Failed to download voice message (${res.statusCode})');
+    }
+    return E2EEService.instance.decryptBytes(
+      accountId: myId,
+      cipherBytes: res.bodyBytes,
+      otherPartyPublicKeyBase64: otherPublicKey,
+    );
   }
 
   // --- Messages -----------------------------------------------------------
@@ -1616,7 +1951,7 @@ class YandexStorageApiService implements ApiService {
     await _ensurePublicKeyPublished();
     final me = await _currentUserRow();
     final myId = me['id'] as String;
-    final data = await _readCollection(_messagesKey);
+    final data = await _readCollection(_messagesKey, bypassCache: true);
     final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     final latestByOther = <String, Map<String, dynamic>>{};
     for (final row in items) {
@@ -1660,7 +1995,7 @@ class YandexStorageApiService implements ApiService {
     await _ensurePublicKeyPublished();
     final me = await _currentUserRow();
     final myId = me['id'] as String;
-    final data = await _readCollection(_messagesKey);
+    final data = await _readCollection(_messagesKey, bypassCache: true);
     final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     final between = items.where((r) =>
         (r['sender_id'] == myId && r['recipient_id'] == otherUserId) ||
@@ -1766,7 +2101,7 @@ class YandexStorageApiService implements ApiService {
   Future<Map<String, DateTime>> fetchReadReceipts() async {
     final me = await _currentUserRow();
     final myId = me['id'] as String;
-    final data = await _readCollection(_messageReadsKey);
+    final data = await _readCollection(_messageReadsKey, bypassCache: true);
     final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     final receipts = <String, DateTime>{};
     for (final row in items) {

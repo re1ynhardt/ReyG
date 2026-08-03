@@ -218,7 +218,7 @@ class _NotificationsShadeState extends State<_NotificationsShade> {
                               )
                             : RefreshIndicator(
                                 key: const ValueKey('list'),
-                                onRefresh: notifications.load,
+                                onRefresh: () => notifications.load(force: true),
                                 color: accent,
                                 child: ListView.separated(
                                   shrinkWrap: true,

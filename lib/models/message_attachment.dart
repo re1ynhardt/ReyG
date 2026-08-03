@@ -44,8 +44,46 @@ class MessageAttachment {
         audioUrl = '',
         durationSeconds = 0;
 
+  /// A photo shared in a chat thread. [coverUrl] is the uploaded image
+  /// itself (see `YandexStorageApiService.uploadChatImage`) — reusing the
+  /// shared `coverUrl` field rather than adding a new one, since it's
+  /// already exactly "the image to display" for every other attachment
+  /// type.
+  const MessageAttachment.image({
+    required this.id,
+    required this.coverUrl,
+    this.caption = '',
+  })  : type = _typeImage,
+        title = '',
+        artist = '',
+        audioUrl = '',
+        durationSeconds = 0,
+        playlistName = '',
+        trackIds = const [];
+
+  /// A voice message recorded in a chat thread. [audioUrl] points at the
+  /// ENCRYPTED recording (see `YandexStorageApiService.uploadChatVoice`)
+  /// — unlike [MessageAttachment.image], the bytes at that URL are
+  /// opaque AES-256-GCM ciphertext, not a playable file, so playback
+  /// always goes through `YandexStorageApiService.downloadChatVoice` to
+  /// decrypt them first. [durationSeconds] is only ever a display hint
+  /// (waveform/label) computed client-side at recording time.
+  const MessageAttachment.voice({
+    required this.id,
+    required this.audioUrl,
+    required this.durationSeconds,
+    this.caption = '',
+  })  : type = _typeVoice,
+        title = '',
+        artist = '',
+        coverUrl = '',
+        playlistName = '',
+        trackIds = const [];
+
   static const _typeTrack = 'track';
   static const _typePlaylist = 'playlist';
+  static const _typeImage = 'image';
+  static const _typeVoice = 'voice';
 
   /// Leading marker that flags a [DirectMessage.text] as carrying an
   /// attachment payload rather than plain user-typed text. Uses a
@@ -75,26 +113,42 @@ class MessageAttachment {
 
   bool get isTrack => type == _typeTrack;
   bool get isPlaylist => type == _typePlaylist;
+  bool get isImage => type == _typeImage;
+  bool get isVoice => type == _typeVoice;
 
   /// Returns a copy of this attachment with [caption] replaced — used by
   /// the composer to fold in whatever text was typed at send time.
-  MessageAttachment withCaption(String caption) => isTrack
-      ? MessageAttachment.track(
-          id: id,
-          title: title,
-          artist: artist,
-          coverUrl: coverUrl,
-          audioUrl: audioUrl,
-          durationSeconds: durationSeconds,
-          caption: caption,
-        )
-      : MessageAttachment.playlist(
-          id: id,
-          playlistName: playlistName,
-          coverUrl: coverUrl,
-          trackIds: trackIds,
-          caption: caption,
-        );
+  MessageAttachment withCaption(String caption) {
+    if (isTrack) {
+      return MessageAttachment.track(
+        id: id,
+        title: title,
+        artist: artist,
+        coverUrl: coverUrl,
+        audioUrl: audioUrl,
+        durationSeconds: durationSeconds,
+        caption: caption,
+      );
+    }
+    if (isImage) {
+      return MessageAttachment.image(id: id, coverUrl: coverUrl, caption: caption);
+    }
+    if (isVoice) {
+      return MessageAttachment.voice(
+        id: id,
+        audioUrl: audioUrl,
+        durationSeconds: durationSeconds,
+        caption: caption,
+      );
+    }
+    return MessageAttachment.playlist(
+      id: id,
+      playlistName: playlistName,
+      coverUrl: coverUrl,
+      trackIds: trackIds,
+      caption: caption,
+    );
+  }
 
   /// The [Track] to hand to `PlayerProvider` for a track attachment.
   /// Only meaningful when [isTrack].
@@ -121,14 +175,29 @@ class MessageAttachment {
             'duration_seconds': durationSeconds,
             'caption': caption,
           }
-        : {
-            'type': type,
-            'id': id,
-            'name': playlistName,
-            'cover_url': coverUrl,
-            'track_ids': trackIds,
-            'caption': caption,
-          };
+        : isImage
+            ? {
+                'type': type,
+                'id': id,
+                'cover_url': coverUrl,
+                'caption': caption,
+              }
+            : isVoice
+                ? {
+                    'type': type,
+                    'id': id,
+                    'audio_url': audioUrl,
+                    'duration_seconds': durationSeconds,
+                    'caption': caption,
+                  }
+                : {
+                    'type': type,
+                    'id': id,
+                    'name': playlistName,
+                    'cover_url': coverUrl,
+                    'track_ids': trackIds,
+                    'caption': caption,
+                  };
     return '$marker${jsonEncode(json)}';
   }
 
@@ -155,6 +224,19 @@ class MessageAttachment {
             playlistName: json['name'] as String? ?? '',
             coverUrl: json['cover_url'] as String? ?? '',
             trackIds: (json['track_ids'] as List<dynamic>?)?.map((e) => e as String).toList() ?? const [],
+            caption: json['caption'] as String? ?? '',
+          );
+        case _typeImage:
+          return MessageAttachment.image(
+            id: json['id'] as String,
+            coverUrl: json['cover_url'] as String? ?? '',
+            caption: json['caption'] as String? ?? '',
+          );
+        case _typeVoice:
+          return MessageAttachment.voice(
+            id: json['id'] as String,
+            audioUrl: json['audio_url'] as String? ?? '',
+            durationSeconds: (json['duration_seconds'] as num?)?.toInt() ?? 0,
             caption: json['caption'] as String? ?? '',
           );
       }

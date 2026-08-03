@@ -152,6 +152,11 @@ abstract class ApiService {
   /// Marks/unmarks [userId] as a favorite account for the current user.
   Future<void> setFavoriteUser({required String userId, required bool favorite});
 
+  /// Number of accounts that have favorited [userId] — i.e. their fan/
+  /// subscriber count, shown as the "Favorites" stat on their Community
+  /// profile.
+  Future<int> fetchFavoriteUserCount(String userId);
+
   /// Developer-only — unlike most "developer-only" methods here, support
   /// accounts may NOT call this one either. Re-applies the current
   /// developer/support/performer email lists (see [ApiService]'s

@@ -328,9 +328,13 @@ class _HomeContent extends StatelessWidget {
     final currentTrackId = context.select<PlayerProvider, String?>((p) => p.currentTrack?.id);
     final player = context.read<PlayerProvider>();
     final featuredTags = library.featuredTags.where((t) => t.isNotEmpty).toList();
+    // The home screen's "all tracks" section is just a preview — capped at
+    // 100 so it doesn't try to render the entire library inline; the full
+    // list lives on the Library tab.
+    final homeTracks = library.tracks.take(100).toList();
 
     return RefreshIndicator(
-      onRefresh: library.loadAll,
+      onRefresh: () => library.loadAll(forceRefresh: true),
       child: CustomScrollView(
         slivers: [
           const SliverToBoxAdapter(child: SizedBox(height: _switcherClearance)),
@@ -401,14 +405,14 @@ class _HomeContent extends StatelessWidget {
             ),
           ),
           SliverList.builder(
-            itemCount: library.tracks.length,
+            itemCount: homeTracks.length,
             itemBuilder: (context, i) {
-              final track = library.tracks[i];
+              final track = homeTracks[i];
               final isCurrent = currentTrackId == track.id;
               return TrackListTile(
                 track: track,
                 isPlaying: isCurrent,
-                onTap: () => player.playQueue(library.tracks, startIndex: i),
+                onTap: () => player.playQueue(homeTracks, startIndex: i),
                 trailing: IconButton(
                   icon: const Icon(Icons.more_vert),
                   onPressed: () => showModalBottomSheet(
@@ -445,7 +449,7 @@ class _RecommendationsContent extends StatelessWidget {
     final recommended = library.recommendedTracks;
 
     return RefreshIndicator(
-      onRefresh: library.loadAll,
+      onRefresh: () => library.loadAll(forceRefresh: true),
       child: CustomScrollView(
         slivers: [
           const SliverToBoxAdapter(child: SizedBox(height: _switcherClearance)),

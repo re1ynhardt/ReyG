@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/message_attachment.dart';
@@ -5,6 +6,8 @@ import '../../models/playlist.dart';
 import '../../models/track.dart';
 import '../../providers/app_state.dart';
 import '../../providers/library_provider.dart';
+import '../../providers/messages_provider.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/track_list_tile.dart';
 
 /// Bottom sheet opened from the chat composer's attach button. Lets the
@@ -21,14 +24,23 @@ class AttachPickerSheet extends StatefulWidget {
 }
 
 class _AttachPickerSheetState extends State<AttachPickerSheet> with SingleTickerProviderStateMixin {
+  // Kept in sync with YandexStorageApiService's own rejection rules
+  // (_rejectedCoverExtensions / _maxCoverBytes) so a bad pick is caught
+  // here before spending a network round trip on it.
+  static const _allowedImageExtensions = [
+    'jpg', 'jpeg', 'png', 'webp', 'bmp', 'heic', 'heif', 'tif', 'tiff',
+  ];
+  static const _maxImageBytes = 5 * 1024 * 1024;
+
   late final TabController _tabController;
   final _searchController = TextEditingController();
   String _query = '';
+  bool _uploadingImage = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -72,6 +84,33 @@ class _AttachPickerSheetState extends State<AttachPickerSheet> with SingleTicker
     );
   }
 
+  Future<void> _pickAndUploadImage() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: _allowedImageExtensions,
+    );
+    final picked = result?.files.single;
+    if (picked?.path == null) return;
+
+    if (picked!.size > _maxImageBytes) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('cover_too_large'))));
+      }
+      return;
+    }
+
+    setState(() => _uploadingImage = true);
+    try {
+      final attachment = await context.read<MessagesProvider>().uploadImageAttachment(picked.path!);
+      if (mounted) Navigator.pop(context, attachment);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _uploadingImage = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryProvider>();
@@ -86,17 +125,18 @@ class _AttachPickerSheetState extends State<AttachPickerSheet> with SingleTicker
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text(context.tr('attach'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(context.tr('attach'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             ),
-            TabBar(
+            _AttachSegmentedToggle(
               controller: _tabController,
-              tabs: [
-                Tab(text: context.tr('attach_track_tab')),
-                Tab(text: context.tr('attach_playlist_tab')),
+              labels: [
+                context.tr('attach_track_tab'),
+                context.tr('attach_playlist_tab'),
+                context.tr('attach_image_tab'),
               ],
             ),
             Expanded(
@@ -160,10 +200,117 @@ class _AttachPickerSheetState extends State<AttachPickerSheet> with SingleTicker
                             return _PlaylistRow(playlist: playlist, onTap: () => _sendPlaylist(playlist));
                           },
                         ),
+                  Center(
+                    child: _uploadingImage
+                        ? const CircularProgressIndicator()
+                        : Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.add_photo_alternate_outlined, size: 48, color: theme.hintColor),
+                                const SizedBox(height: 12),
+                                ElevatedButton(
+                                  onPressed: _pickAndUploadImage,
+                                  child: Text(context.tr('choose_image_file')),
+                                ),
+                              ],
+                            ),
+                          ),
+                  ),
                 ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Pill-shaped "Track / Playlist / Photo" switcher, built from scratch
+/// instead of a Material [TabBar]: a rounded translucent track with a
+/// solid accent pill that slides behind whichever label is selected,
+/// following [controller]'s animation 1:1 during swipes (not just on
+/// settle) — so it still tracks a swipe on the [TabBarView] below, just
+/// without [TabBar]'s default underline indicator. Same pattern as
+/// user_profile_screen.dart's `_ProfileSegmentedTabBar`, generalized to
+/// any number of segments.
+class _AttachSegmentedToggle extends StatelessWidget {
+  const _AttachSegmentedToggle({required this.controller, required this.labels});
+
+  final TabController controller;
+  final List<String> labels;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.secondary;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: theme.cardColor.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: AnimatedBuilder(
+          animation: controller.animation ?? controller,
+          builder: (context, _) {
+            final maxIndex = (labels.length - 1).toDouble();
+            final t = (controller.animation?.value ?? controller.index.toDouble()).clamp(0.0, maxIndex);
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final segmentWidth = constraints.maxWidth / labels.length;
+                return Stack(
+                  children: [
+                    Positioned(
+                      top: 0,
+                      bottom: 0,
+                      left: t * segmentWidth,
+                      width: segmentWidth,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: accent,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: accent.withOpacity(0.4),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: List.generate(labels.length, (i) {
+                        final selected = t.round() == i;
+                        return Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => controller.animateTo(i),
+                            child: Center(
+                              child: Text(
+                                labels[i],
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: selected ? onColor(accent) : theme.hintColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         ),
       ),
     );

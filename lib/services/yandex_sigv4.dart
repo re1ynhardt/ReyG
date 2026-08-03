@@ -25,11 +25,18 @@ class YandexSigV4 {
   /// Builds signed headers for a path-style S3 request.
   /// [canonicalPath] must start with '/' and already be URI-encoded
   /// per-segment (e.g. '/my-bucket/media/audio/abc.mp3').
+  /// [canonicalQueryString] (if any) must already be built per SigV4
+  /// rules: params sorted by (encoded) key, each `key=value` RFC-3986
+  /// percent-encoded and joined with `&` — see [YandexSigV4.buildCanonicalQuery]
+  /// for a helper that does this correctly. Defaults to '' (no query
+  /// string), which covers every plain object GET/PUT/DELETE this app
+  /// makes; only bucket-level requests like ListObjectsV2 need it.
   Map<String, String> signedHeaders({
     required String method,
     required String canonicalPath,
     required List<int> body,
     Map<String, String> extraHeaders = const {},
+    String canonicalQueryString = '',
   }) {
     final now = DateTime.now().toUtc();
     final amzDate = _amzDate(now);
@@ -51,7 +58,7 @@ class YandexSigV4 {
     final canonicalRequest = [
       method,
       canonicalPath,
-      '', // no query string for the requests this service makes
+      canonicalQueryString,
       canonicalHeaders,
       signedHeaderNames,
       payloadHash,
@@ -77,6 +84,20 @@ class YandexSigV4 {
       ...headers,
       'Authorization': authorization,
     };
+  }
+
+  /// Builds a SigV4-correct canonical query string from [params]: sorted
+  /// by (percent-encoded) key, each key/value RFC-3986 encoded (so `~`
+  /// stays literal but everything `Uri.encodeQueryComponent` would
+  /// otherwise leave as `+` for spaces is re-escaped to `%20`, per the
+  /// SigV4 spec), joined with `&`. Also handy for building the actual
+  /// request URI's query string, since it's the same encoding S3 expects
+  /// there too.
+  static String buildCanonicalQuery(Map<String, String> params) {
+    String encode(String s) => Uri.encodeQueryComponent(s).replaceAll('+', '%20');
+    final entries = params.entries.map((e) => MapEntry(encode(e.key), encode(e.value))).toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    return entries.map((e) => '${e.key}=${e.value}').join('&');
   }
 
   String _originalKey(Map<String, String> headers, String lowerKey) {

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/message.dart';
+import '../../models/message_attachment.dart';
 import '../../models/user.dart';
 import '../../providers/app_state.dart';
 import '../../providers/community_provider.dart';
@@ -22,6 +25,24 @@ class MessagesScreen extends StatefulWidget {
 
 class _MessagesScreenState extends State<MessagesScreen> {
   bool _requested = false;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // No realtime push from the backend, so poll for new messages/updated
+    // previews while this tab is open (quiet refresh — no spinner, only
+    // rebuilds when something actually changed).
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      context.read<MessagesProvider>().refreshConversationsQuietly();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +118,23 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
+/// Renders [rawText] (a [ConversationSummary.lastMessage]/plain message)
+/// for the conversation list: plain text as-is, or a short icon+label
+/// (plus caption, if any) when it's an encoded [MessageAttachment].
+String _previewText(BuildContext context, String rawText) {
+  final attachment = MessageAttachment.tryParse(rawText);
+  if (attachment == null) return rawText;
+  final label = attachment.isImage
+      ? context.tr('attachment_preview_image')
+      : attachment.isTrack
+          ? context.tr('attachment_preview_track')
+          : attachment.isVoice
+              ? context.tr('attachment_preview_voice')
+              : context.tr('attachment_preview_playlist');
+  final caption = attachment.caption.trim();
+  return caption.isEmpty ? label : '$label $caption';
+}
+
 class _ConversationTile extends StatelessWidget {
   const _ConversationTile({
     required this.convo,
@@ -120,7 +158,8 @@ class _ConversationTile extends StatelessWidget {
     final theme = Theme.of(context);
     final name = user?.displayName ?? convo.otherUserId;
     final avatarUrl = user?.avatarUrl ?? '';
-    final preview = convo.lastMessageFromMe ? '${context.tr('you_prefix')}${convo.lastMessage}' : convo.lastMessage;
+    final body = _previewText(context, convo.lastMessage);
+    final preview = convo.lastMessageFromMe ? '${context.tr('you_prefix')}$body' : body;
     return ListTile(
       leading: GestureDetector(
         onTap: user == null ? null : () => Navigator.of(context).push(

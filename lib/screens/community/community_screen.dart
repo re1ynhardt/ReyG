@@ -62,7 +62,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(context.tr('community'))),
       body: RefreshIndicator(
-        onRefresh: () => context.read<CommunityProvider>().loadUsers(),
+        onRefresh: () => context.read<CommunityProvider>().loadUsers(forceRefresh: true),
         child: Column(
           children: [
             Padding(
@@ -271,7 +271,7 @@ class _UserTile extends StatelessWidget {
             ),
         ],
       ),
-      title: Text(user.displayName),
+      title: Text(user.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -285,7 +285,10 @@ class _UserTile extends StatelessWidget {
                       : user.isSupport
                           ? context.tr('support_account')
                           : context.tr('performer_account'),
+                  style: const TextStyle(fontSize: 10),
                 ),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 2),
                 visualDensity: VisualDensity.compact,
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),

@@ -40,6 +40,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
   /// once up front so the UI can show a "private" message instead of an
   /// empty list when it's hidden rather than just empty.
   late Future<bool> _canViewFuture;
+  /// Number of accounts that have favorited this profile's user (their
+  /// fan count) — shown as the "Favorites" stat, in place of how many
+  /// tracks this account has liked.
+  late Future<int> _favoriteUserCountFuture;
   /// Drives the swipe between the two profile pages: "Library" (liked
   /// tracks + playlists, same content this screen always showed) and
   /// "Artist" (tracks this specific account has uploaded).
@@ -53,6 +57,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
     _canViewFuture = community.canViewUserLibrary(widget.user.id);
     _tracksFuture = community.fetchUserLikedTracks(widget.user.id);
     _playlistsFuture = community.fetchUserPlaylists(widget.user.id);
+    _favoriteUserCountFuture = community.fetchFavoriteUserCount(widget.user.id);
   }
 
   @override
@@ -65,8 +70,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
     final community = context.read<CommunityProvider>();
     setState(() {
       _canViewFuture = community.canViewUserLibrary(widget.user.id);
-      _tracksFuture = community.fetchUserLikedTracks(widget.user.id);
-      _playlistsFuture = community.fetchUserPlaylists(widget.user.id);
+      _tracksFuture = community.fetchUserLikedTracks(widget.user.id, forceRefresh: true);
+      _playlistsFuture = community.fetchUserPlaylists(widget.user.id, forceRefresh: true);
+      _favoriteUserCountFuture = community.fetchFavoriteUserCount(widget.user.id, forceRefresh: true);
     });
   }
 
@@ -165,17 +171,25 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
           FutureBuilder<List<Playlist>>(
             future: _playlistsFuture,
             builder: (context, playlistsSnapshot) {
-              return FutureBuilder<List<Track>>(
-                future: _tracksFuture,
-                builder: (context, tracksSnapshot) {
+              return FutureBuilder<int>(
+                future: _favoriteUserCountFuture,
+                builder: (context, favoriteCountSnapshot) {
                   return _ProfileHero(
                     user: user,
                     uploadedTracksCount: uploadedTracks.length,
                     playlistsCount: playlistsSnapshot.data?.length ?? 0,
-                    likedTracksCount: tracksSnapshot.data?.length ?? 0,
+                    subscriberCount: favoriteCountSnapshot.data ?? 0,
                     isSelf: isSelf,
                     isSubscribed: isFavorite,
-                    onToggleSubscribe: () => context.read<CommunityProvider>().toggleFavoriteUser(user.id),
+                    onToggleSubscribe: () async {
+                      await context.read<CommunityProvider>().toggleFavoriteUser(user.id);
+                      if (mounted) {
+                        setState(() {
+                          _favoriteUserCountFuture =
+                              context.read<CommunityProvider>().fetchFavoriteUserCount(user.id, forceRefresh: true);
+                        });
+                      }
+                    },
                   );
                 },
               );
@@ -321,7 +335,7 @@ class _ProfileHero extends StatelessWidget {
     required this.user,
     required this.uploadedTracksCount,
     required this.playlistsCount,
-    required this.likedTracksCount,
+    required this.subscriberCount,
     required this.isSelf,
     required this.isSubscribed,
     required this.onToggleSubscribe,
@@ -330,7 +344,7 @@ class _ProfileHero extends StatelessWidget {
   final AppUser user;
   final int uploadedTracksCount;
   final int playlistsCount;
-  final int likedTracksCount;
+  final int subscriberCount;
   // Own profile doesn't get Subscribe/Message buttons — you can't
   // subscribe to or message yourself.
   final bool isSelf;
@@ -476,7 +490,7 @@ class _ProfileHero extends StatelessWidget {
                   _HeroStatDivider(),
                   _HeroStat(value: playlistsCount, label: context.tr('playlists')),
                   _HeroStatDivider(),
-                  _HeroStat(value: likedTracksCount, label: context.tr('favorites')),
+                  _HeroStat(value: subscriberCount, label: context.tr('subscribers')),
                 ],
               ),
               if (!isSelf) ...[
