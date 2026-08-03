@@ -9,6 +9,7 @@ import '../../providers/community_provider.dart';
 import '../../widgets/artist_avatar.dart';
 import '../../widgets/section_header.dart';
 import '../messages/chat_screen.dart';
+import '../posts/posts_feed_screen.dart';
 import 'user_profile_screen.dart';
 
 /// Community tab: every registered user, searchable by name, with a small
@@ -60,7 +61,18 @@ class _CommunityScreenState extends State<CommunityScreen> {
     final favoriteCount = others.where((u) => community.isFavoriteUser(u.id)).length;
 
     return Scaffold(
-      appBar: AppBar(title: Text(context.tr('community'))),
+      appBar: AppBar(
+        title: Text(context.tr('community')),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.dynamic_feed_outlined),
+            tooltip: context.tr('posts'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const PostsFeedScreen()),
+            ),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () => context.read<CommunityProvider>().loadUsers(forceRefresh: true),
         child: Column(

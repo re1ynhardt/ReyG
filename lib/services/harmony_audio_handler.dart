@@ -3,6 +3,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:rxdart/rxdart.dart';
 import '../models/track.dart';
 import 'download_service.dart';
+import 'stream_cache_service.dart';
 
 /// Custom [BaseAudioHandler] wrapping just_audio's [AudioPlayer].
 ///
@@ -21,7 +22,27 @@ class HarmonyAudioHandler extends BaseAudioHandler with SeekHandler {
     _init();
   }
 
-  final AudioPlayer player = AudioPlayer();
+  // Capped to ~10s ahead of the current position (instead of just_audio's
+  // default, which happily buffers 50+ seconds — often most of a short
+  // track — the moment playback starts). Saves mobile data: skipping away
+  // from a track a few seconds in now only ever costs ~10s of audio, not
+  // however much the default buffer had already pulled in.
+  // Note: these are hints, not hard caps — ExoPlayer/AVFoundation may
+  // occasionally buffer a little past them, but this cuts normal
+  // over-fetching drastically compared to the defaults.
+  final AudioPlayer player = AudioPlayer(
+    audioLoadConfiguration: const AudioLoadConfiguration(
+      androidLoadControl: AndroidLoadControl(
+        minBufferDuration: Duration(seconds: 10),
+        maxBufferDuration: Duration(seconds: 15),
+        bufferForPlaybackDuration: Duration(seconds: 2),
+        bufferForPlaybackAfterRebufferDuration: Duration(seconds: 5),
+      ),
+      darwinLoadControl: DarwinLoadControl(
+        preferredForwardBufferDuration: Duration(seconds: 10),
+      ),
+    ),
+  );
   List<Track> _tracks = [];
 
   List<Track> get tracks => _tracks;
@@ -123,13 +144,26 @@ class HarmonyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// Prefers a cached on-device copy of [t] (offline playback) over
-  /// streaming it, falling back to the network URL when it isn't cached.
+  /// streaming it, falling back to streaming it from the network when it
+  /// isn't cached.
+  ///
+  /// Streamed tracks go through [LockCachingAudioSource], which writes
+  /// every downloaded byte to [StreamCacheService]'s file for [t] as it
+  /// arrives during playback. That's what makes replaying the same track
+  /// later — on repeat or not — free: if that file is already complete
+  /// from a previous play, just_audio reads it straight off disk instead
+  /// of hitting Yandex Storage again.
   Future<AudioSource> _audioSourceFor(Track t) async {
     final localPath = await DownloadService.instance.cachedFilePath(t.id);
     if (localPath != null) {
       return AudioSource.uri(Uri.file(localPath), tag: t.id);
     }
-    return AudioSource.uri(Uri.parse(t.audioUrl), tag: t.id);
+    final cacheFile = await StreamCacheService.fileFor(t);
+    return LockCachingAudioSource(
+      Uri.parse(t.audioUrl),
+      cacheFile: cacheFile,
+      tag: t.id,
+    );
   }
 
   @override

@@ -13,6 +13,7 @@ class DirectMessage {
     required this.recipientId,
     required this.text,
     required this.createdAt,
+    this.editedAt,
   });
 
   final String id;
@@ -20,6 +21,11 @@ class DirectMessage {
   final String recipientId;
   final String text;
   final DateTime createdAt;
+  /// When this message was last edited (see
+  /// `YandexStorageApiService.editMessage`), or null if it never was.
+  /// Only ever set by the sender — the other side just sees the updated
+  /// [text] plus this timestamp for the "edited" label.
+  final DateTime? editedAt;
 
   /// Enforced by the chat composer and by backends that accept
   /// [ApiService.sendMessage] — anything longer is rejected. Sized to
@@ -37,6 +43,12 @@ class DirectMessage {
           (((json['created_at'] as num?) ?? 0) * 1000).round(),
           isUtc: true,
         ).toLocal(),
+        editedAt: json['edited_at'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                ((json['edited_at'] as num) * 1000).round(),
+                isUtc: true,
+              ).toLocal(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -45,6 +57,7 @@ class DirectMessage {
         'recipient_id': recipientId,
         'text': text,
         'created_at': createdAt.toUtc().millisecondsSinceEpoch / 1000,
+        if (editedAt != null) 'edited_at': editedAt!.toUtc().millisecondsSinceEpoch / 1000,
       };
 }
 

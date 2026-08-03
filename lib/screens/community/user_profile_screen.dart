@@ -18,6 +18,7 @@ import '../../widgets/track_list_tile.dart';
 import '../library/playlist_picker_sheet.dart';
 import '../messages/chat_screen.dart';
 import '../player/mini_player.dart';
+import '../posts/posts_feed_screen.dart';
 import '../settings/banner_crop_screen.dart';
 
 /// Read-only profile for another Community user: their liked (favorited)
@@ -152,6 +153,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
         elevation: 0,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.dynamic_feed_outlined),
+            tooltip: context.tr('user_posts_tooltip'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => PostsFeedScreen(authorId: user.id, authorName: user.displayName),
+              ),
+            ),
+          ),
           if (isSelf)
             IconButton(
               icon: const Icon(Icons.palette_outlined),

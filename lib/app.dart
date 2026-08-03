@@ -7,6 +7,7 @@ import 'providers/library_provider.dart';
 import 'providers/messages_provider.dart';
 import 'providers/notifications_provider.dart';
 import 'providers/player_provider.dart';
+import 'providers/posts_provider.dart';
 import 'screens/splash_gate.dart';
 import 'services/api_service.dart';
 import 'services/download_service.dart';
@@ -25,11 +26,16 @@ class HarmonyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppState()),
+        // Exposed directly (not just wrapped inside the providers below)
+        // so HomeScreen can hand it to MessageNotificationService for
+        // its own polling — see lib/services/message_notification_service.dart.
+        Provider<ApiService>.value(value: api),
         ChangeNotifierProvider(create: (_) => AuthProvider(api)),
         ChangeNotifierProvider(create: (_) => LibraryProvider(api)),
         ChangeNotifierProvider(create: (_) => CommunityProvider(api)),
         ChangeNotifierProvider(create: (_) => NotificationsProvider(api)),
         ChangeNotifierProvider(create: (_) => MessagesProvider(api)),
+        ChangeNotifierProvider(create: (_) => PostsProvider(api)),
         ChangeNotifierProvider.value(value: DownloadService.instance),
         Provider.value(value: updateService),
         ChangeNotifierProxyProvider<LibraryProvider, PlayerProvider>(

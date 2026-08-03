@@ -10,6 +10,7 @@ import '../models/track.dart';
 import '../models/user.dart';
 import '../models/app_notification.dart';
 import '../models/message.dart';
+import '../models/post.dart';
 import 'api_service.dart';
 import 'e2ee_service.dart';
 import 'yandex_sigv4.dart';
@@ -111,6 +112,14 @@ class YandexStorageApiService implements ApiService {
   // find and remove those files from the bucket without needing to read
   // anyone's messages. It carries no message content, only ownership.
   static const _chatAttachmentsKey = 'db/chat_attachments.json';
+  static const _postsKey = 'db/posts.json';
+  // Rows are `{user_id, post_id}` — deliberately separate from the post's
+  // own denormalized `like_count` (fast to read for the feed) so we can
+  // still answer "did I like this" / "which hashtags does this account
+  // engage with" without scanning post text. That per-account engagement
+  // trail is the foundation a future recommendation system would read
+  // from — nothing more is needed here until that ranker exists.
+  static const _postLikesKey = 'db/post_likes.json';
   static const _audioPrefix = 'media/audio/';
   static const _coversPrefix = 'media/covers/';
   static const _avatarsPrefix = 'media/avatars/';
@@ -123,6 +132,8 @@ class YandexStorageApiService implements ApiService {
   static const _maxAvatarBytes = 5 * 1024 * 1024;
   static const _maxBannerBytes = 10 * 1024 * 1024;
   static const _maxCoverBytes = 5 * 1024 * 1024;
+  static const _postImagesPrefix = 'media/post_images/';
+  static const _maxPostImageBytes = 5 * 1024 * 1024;
   // Ciphertext is a little larger than the source recording (12-byte
   // nonce + 16-byte GCM tag), but that's negligible next to this cap —
   // generous enough for several minutes of compressed audio.
@@ -987,10 +998,29 @@ class YandexStorageApiService implements ApiService {
       return null;
     });
 
+    // Every post this account authored, plus its images, and every like
+    // row it left on (or received on) any post.
+    final postImageUrls = <String?>[];
+    await _withCollection(_postsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final owned = items.where((r) => (r as Map)['author_id'] == userId);
+      for (final r in owned) {
+        postImageUrls.addAll(((r as Map)['image_urls'] as List<dynamic>? ?? const []).cast<String?>());
+      }
+      final ownedIds = owned.map((r) => (r as Map)['id'] as String).toSet();
+      items.removeWhere((r) => ownedIds.contains((r as Map)['id']));
+      return null;
+    });
+    await _withCollection(_postLikesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.removeWhere((r) => (r as Map)['user_id'] == userId);
+      return null;
+    });
+
     // Best-effort cleanup of files — the account/playlist/message
     // metadata is already gone either way, so a failure here shouldn't
     // surface as an error to the UI.
-    for (final url in [avatarUrl, bannerUrl, ...coverUrls, ...chatImageUrls]) {
+    for (final url in [avatarUrl, bannerUrl, ...coverUrls, ...chatImageUrls, ...postImageUrls]) {
       final key = _keyFromPublicUrl(url);
       if (key == null) continue;
       try {
@@ -2070,7 +2100,73 @@ class YandexStorageApiService implements ApiService {
     return DirectMessage.fromJson({...row, 'text': trimmed});
   }
 
-  // --- Messages: read receipts ---------------------------------------------
+  /// Yandex Storage-only (same reasoning as [uploadChatImage] /
+  /// [wipeAllDirectMessages] above — this doesn't exist on the abstract
+  /// [ApiService], so mock/legacy backends are untouched). Edits a
+  /// message THIS account sent: re-encrypts [newText] for the recipient
+  /// and stamps `edited_at`. Throws [ApiException] if the message isn't
+  /// found, isn't yours, or is an attachment (those aren't editable —
+  /// see [MessagesProvider]/`ChatScreen` for the guard on the UI side).
+  Future<DirectMessage> editMessage({
+    required String messageId,
+    required String otherUserId,
+    required String newText,
+  }) async {
+    await _ensurePublicKeyPublished();
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final trimmed = newText.trim();
+    if (trimmed.isEmpty) {
+      throw ApiException('Message text is required');
+    }
+    if (trimmed.length > DirectMessage.maxLength) {
+      throw ApiException('Message is too long');
+    }
+    final otherPublicKey = await _publicKeyOf(otherUserId);
+    if (otherPublicKey == null) {
+      throw ApiException(
+        'This account can\'t receive encrypted messages yet — ask them to open Messages once first.',
+      );
+    }
+    final cipherText = await E2EEService.instance.encrypt(
+      accountId: myId,
+      plainText: trimmed,
+      otherPartyPublicKeyBase64: otherPublicKey,
+    );
+    final editedAt = DateTime.now().millisecondsSinceEpoch / 1000;
+    final row = await _withCollection(_messagesKey, (data) {
+      final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final match = items.cast<Map<String, dynamic>?>().firstWhere(
+            (r) => r?['id'] == messageId && r?['sender_id'] == myId,
+            orElse: () => null,
+          );
+      if (match == null) {
+        throw ApiException('Message not found');
+      }
+      match['text'] = cipherText;
+      match['edited_at'] = editedAt;
+      return match;
+    });
+    return DirectMessage.fromJson({...row, 'text': trimmed});
+  }
+
+  /// Yandex Storage-only, same restrictions as [editMessage]. Removes a
+  /// message THIS account sent, for both sides of the conversation —
+  /// there's no "delete for me only" here, mirroring how [editMessage]
+  /// also changes what the other side sees.
+  Future<void> deleteMessage({required String messageId}) async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    await _withCollection(_messagesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final before = items.length;
+      items.removeWhere((r) => (r as Map)['id'] == messageId && r['sender_id'] == myId);
+      if (items.length == before) {
+        throw ApiException('Message not found');
+      }
+      return null;
+    });
+  }
   // A single collection of rows {reader_id, other_user_id, read_up_to}:
   // "reader_id has read every message exchanged with other_user_id up
   // through read_up_to". Each account writes only its own row (keyed by
@@ -2114,6 +2210,243 @@ class YandexStorageApiService implements ApiService {
       receipts[readerId] = readUpTo;
     }
     return receipts;
+  }
+
+  // --- Posts --------------------------------------------------------------
+  // Yandex Storage-only, same reasoning as uploadChatImage/editMessage
+  // above: these don't exist on the abstract ApiService, so mock/legacy
+  // backends are untouched — callers reach these by casting to
+  // YandexStorageApiService (see PostsProvider) and handle the "not
+  // supported on this backend" case the same way MessagesProvider does.
+  //
+  // like_count is deliberately NOT stored on the post row itself — it's
+  // derived from _postLikesKey every time a post is read, the same way
+  // fetchFavoriteUserCount derives a user's fan count from
+  // _favoriteUsersKey, so it can never drift out of sync with the
+  // like rows themselves (e.g. after deleteUserAccount removes an
+  // account's likes). hashtags + who-liked-what together are the seed
+  // for a future recommendation system: enough to build "posts with
+  // hashtags this account tends to like" without any schema change.
+
+  Post _postFromRow(Map<String, dynamic> row, Map<String, int> likeCounts) => Post.fromJson({
+        ...row,
+        'like_count': likeCounts[row['id']] ?? 0,
+      });
+
+  /// The feed. Pass [hashtag] (without the leading '#') to filter to posts
+  /// carrying that tag, or [authorId] to show one account's posts (used by
+  /// the Community profile screen) — both of those stay newest-first.
+  ///
+  /// The plain global feed (no [hashtag]/[authorId]) is instead ranked by
+  /// recommendation: it scores every post by how many times its hashtags
+  /// appear among the hashtags of posts *this user has already liked*
+  /// (via [_postLikesKey]), highest affinity first, newest-first as the
+  /// tiebreaker. A user with no like history yet — or a post with no tag
+  /// overlap — scores 0, so the feed degrades gracefully to pure recency
+  /// exactly like before recommendations existed.
+  Future<List<Post>> fetchPosts({String? hashtag, String? authorId}) async {
+    final user = await _currentUserRow();
+    final results = await Future.wait([_readCollection(_postsKey), _readCollection(_postLikesKey)]);
+    final data = results[0] as Map<String, dynamic>;
+    final likesData = results[1] as Map<String, dynamic>;
+    final likeRows = (likesData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+
+    final likeCounts = <String, int>{};
+    final myLikedPostIds = <String>{};
+    for (final row in likeRows) {
+      final postId = row['post_id'] as String;
+      likeCounts[postId] = (likeCounts[postId] ?? 0) + 1;
+      if (row['user_id'] == user['id']) myLikedPostIds.add(postId);
+    }
+
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final term = hashtag?.trim().toLowerCase();
+    var filtered = items.where((r) {
+      if (authorId != null && r['author_id'] != authorId) return false;
+      if (term != null && term.isNotEmpty) {
+        final tags = ((r['hashtags'] as List<dynamic>?) ?? const []).cast<String>();
+        if (!tags.contains(term)) return false;
+      }
+      return true;
+    }).toList();
+
+    if (authorId == null && (term == null || term.isEmpty)) {
+      final tagAffinity = <String, int>{};
+      for (final row in items) {
+        if (!myLikedPostIds.contains(row['id'])) continue;
+        for (final tag in ((row['hashtags'] as List<dynamic>?) ?? const []).cast<String>()) {
+          tagAffinity[tag] = (tagAffinity[tag] ?? 0) + 1;
+        }
+      }
+      int scoreOf(Map<String, dynamic> r) {
+        final tags = ((r['hashtags'] as List<dynamic>?) ?? const []).cast<String>();
+        var score = 0;
+        for (final tag in tags) {
+          score += tagAffinity[tag] ?? 0;
+        }
+        return score;
+      }
+      filtered.sort((a, b) {
+        final scoreCmp = scoreOf(b).compareTo(scoreOf(a));
+        if (scoreCmp != 0) return scoreCmp;
+        return ((b['created_at'] as num?) ?? 0).compareTo((a['created_at'] as num?) ?? 0);
+      });
+    } else {
+      filtered.sort((a, b) => ((b['created_at'] as num?) ?? 0).compareTo((a['created_at'] as num?) ?? 0));
+    }
+    return filtered.map((r) => _postFromRow(r, likeCounts)).toList();
+  }
+
+  /// Ids of posts the current user has liked — drives the filled/outline
+  /// heart on the feed and profile without a per-post round trip.
+  Future<List<String>> fetchLikedPostIds() async {
+    final user = await _currentUserRow();
+    final data = await _readCollection(_postLikesKey);
+    final items = (data['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+    return items.where((r) => r['user_id'] == user['id']).map((r) => r['post_id'] as String).toList();
+  }
+
+  /// Creates a post. [localImagePaths] are uploaded to
+  /// `media/post_images/` (public-read, 5 MB each, same cap as playlist
+  /// covers); [trackIds] attach tracks already in the shared catalog —
+  /// posting music here never uploads new audio, it just links to tracks
+  /// the app already has. At least one of text/images/tracks must be
+  /// present. Enforces [Post.maxTextLength], [Post.maxImages],
+  /// [Post.maxTracks], [Post.maxHashtags] and [Post.maxHashtagLength]
+  /// server-side too, as a safety net behind whatever the composer UI
+  /// already checks.
+  Future<Post> createPost({
+    required String text,
+    List<String> localImagePaths = const [],
+    List<String> trackIds = const [],
+    List<String> hashtags = const [],
+  }) async {
+    final user = await _currentUserRow();
+    final trimmed = text.trim();
+    if (trimmed.length > Post.maxTextLength) {
+      throw ApiException('Post text must be ${Post.maxTextLength} characters or fewer');
+    }
+    if (localImagePaths.length > Post.maxImages) {
+      throw ApiException('A post can have at most ${Post.maxImages} images');
+    }
+    if (trackIds.length > Post.maxTracks) {
+      throw ApiException('A post can have at most ${Post.maxTracks} tracks');
+    }
+    if (trimmed.isEmpty && localImagePaths.isEmpty && trackIds.isEmpty) {
+      throw ApiException('A post needs text, an image, or a track');
+    }
+    final tags = <String>[];
+    for (final raw in hashtags) {
+      final tag = raw.trim().toLowerCase();
+      if (tag.isEmpty) continue;
+      if (tag.length > Post.maxHashtagLength) {
+        throw ApiException('Hashtag must be ${Post.maxHashtagLength} characters or fewer');
+      }
+      if (!Post.isValidHashtag(tag)) {
+        throw ApiException('Hashtags can only contain lowercase English letters and numbers');
+      }
+      if (!tags.contains(tag)) tags.add(tag);
+    }
+    if (tags.length > Post.maxHashtags) {
+      throw ApiException('A post can have at most ${Post.maxHashtags} hashtags');
+    }
+
+    final dedupedTrackIds = <String>[];
+    for (final id in trackIds) {
+      if (!dedupedTrackIds.contains(id)) dedupedTrackIds.add(id);
+    }
+    if (dedupedTrackIds.isNotEmpty) {
+      final tracksData = await _readCollection(_tracksKey);
+      final trackItems = (tracksData['items'] as List<dynamic>).cast<Map<String, dynamic>>();
+      for (final id in dedupedTrackIds) {
+        if (!trackItems.any((r) => r['id'] == id)) {
+          throw ApiException('Track not found');
+        }
+      }
+    }
+
+    for (final path in localImagePaths) {
+      final sizeBytes = await File(path).length();
+      if (sizeBytes > _maxPostImageBytes) {
+        throw ApiException('Image is too large — max 5 MB');
+      }
+    }
+    final imageUrls = <String>[];
+    for (final path in localImagePaths) {
+      imageUrls.add(await _uploadMediaFile(path, _postImagesPrefix));
+    }
+
+    final row = await _withCollection(_postsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final row = {
+        'id': _randomId(),
+        'author_id': user['id'],
+        'text': trimmed,
+        'image_urls': imageUrls,
+        'track_ids': dedupedTrackIds,
+        'hashtags': tags,
+        'created_at': DateTime.now().millisecondsSinceEpoch / 1000,
+      };
+      items.add(row);
+      return row;
+    });
+    return _postFromRow(row, const {});
+  }
+
+
+  /// Author (or developer/support) only. Removes the post, its like rows,
+  /// and best-effort deletes its image files from the bucket.
+  Future<void> deletePost(String postId) async {
+    final user = await _currentUserRow();
+    final isModerator = user['is_developer'] == true || user['is_support'] == true;
+    final imageUrls = <String?>[];
+    await _withCollection(_postsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final idx = items.indexWhere((r) => (r as Map)['id'] == postId);
+      if (idx == -1) throw ApiException('Post not found');
+      final row = items[idx] as Map<String, dynamic>;
+      // Checked (and, on failure, thrown) BEFORE removing — a throw here
+      // aborts before _withCollection ever writes, so an unauthorized
+      // call leaves the post untouched instead of deleting it first and
+      // rejecting after the fact.
+      if (row['author_id'] != user['id'] && !isModerator) {
+        throw ApiException('Only the author (or a developer/support account) can delete this post');
+      }
+      imageUrls.addAll((row['image_urls'] as List<dynamic>? ?? const []).cast<String?>());
+      items.removeAt(idx);
+      return null;
+    });
+    await _withCollection(_postLikesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.removeWhere((r) => (r as Map)['post_id'] == postId);
+      return null;
+    });
+    for (final url in imageUrls) {
+      final key = _keyFromPublicUrl(url);
+      if (key == null) continue;
+      try {
+        await _deleteObject(key);
+      } catch (_) {
+        // Non-fatal.
+      }
+    }
+  }
+
+  /// Likes/unlikes a post for the current user. Safe to call repeatedly —
+  /// adding an already-present like (or removing an absent one) is a
+  /// no-op rather than an error, mirroring [setFavoriteUser].
+  Future<void> setPostLike({required String postId, required bool liked}) async {
+    final user = await _currentUserRow();
+    await _withCollection(_postLikesKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      final exists = items.any((r) => r['user_id'] == user['id'] && r['post_id'] == postId);
+      if (liked && !exists) {
+        items.add({'user_id': user['id'], 'post_id': postId});
+      } else if (!liked && exists) {
+        items.removeWhere((r) => r['user_id'] == user['id'] && r['post_id'] == postId);
+      }
+      return null;
+    });
   }
 }
 

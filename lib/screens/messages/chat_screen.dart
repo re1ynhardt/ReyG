@@ -8,12 +8,14 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
+import '../../models/message.dart';
 import '../../models/message_attachment.dart';
 import '../../providers/app_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/community_provider.dart';
 import '../../providers/messages_provider.dart';
 import '../../providers/player_provider.dart';
+import '../../services/message_notification_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/duration_format.dart';
 import '../../widgets/artist_avatar.dart';
@@ -56,6 +58,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // The recorded file never leaves the device unencrypted — it's
   // encrypted in MessagesProvider.uploadVoiceAttachment before upload.
   final _recorder = AudioRecorder();
+  static const _maxRecordingDuration = Duration(minutes: 10);
   bool _isRecording = false;
   bool _isUploadingVoice = false;
   DateTime? _recordingStartedAt;
@@ -66,6 +69,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    // While this thread is open, its messages already show up live in the
+    // chat itself — suppress the system notification for it (see
+    // MessageNotificationService).
+    MessageNotificationService.instance.setOpenThread(widget.otherUserId);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final community = context.read<CommunityProvider>();
       if (community.users.isEmpty) community.loadUsers();
@@ -85,6 +92,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    MessageNotificationService.instance.setOpenThread(null);
     _pollTimer?.cancel();
     _recordTicker?.cancel();
     _recorder.dispose();
@@ -125,6 +133,101 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _showMessageOptions(DirectMessage message, {required bool editable}) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (editable)
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: Text(context.tr('edit_message')),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _editMessage(message);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: Text(context.tr('delete_message'), style: const TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _deleteMessage(message);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editMessage(DirectMessage message) async {
+    final controller = TextEditingController(text: message.text);
+    final newText = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.tr('edit_message')),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: DirectMessage.maxLength,
+          maxLines: 5,
+          minLines: 1,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(context.tr('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: Text(context.tr('save')),
+          ),
+        ],
+      ),
+    );
+    if (newText == null || newText.isEmpty || newText == message.text || !mounted) return;
+    try {
+      await context.read<MessagesProvider>().editMessage(
+            otherUserId: widget.otherUserId,
+            messageId: message.id,
+            newText: newText,
+          );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _deleteMessage(DirectMessage message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.tr('delete_message')),
+        content: Text(context.tr('delete_message_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(context.tr('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(context.tr('delete_message'), style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await context.read<MessagesProvider>().deleteMessage(otherUserId: widget.otherUserId, messageId: message.id);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
   Future<void> _startRecording() async {
     if (_isRecording || _isUploadingVoice) return;
     final hasPermission = await _recorder.hasPermission();
@@ -145,7 +248,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _recordTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      setState(() => _recordingElapsed = DateTime.now().difference(_recordingStartedAt!));
+      final elapsed = DateTime.now().difference(_recordingStartedAt!);
+      setState(() => _recordingElapsed = elapsed);
+      if (elapsed >= _maxRecordingDuration) {
+        // Hit the cap — finalize and send exactly like a manual stop,
+        // rather than silently continuing to record past the limit.
+        _recordTicker?.cancel();
+        _stopAndSendRecording();
+      }
     });
   }
 
@@ -281,7 +391,11 @@ class _ChatScreenState extends State<ChatScreen> {
                               padding: const EdgeInsets.only(bottom: 8),
                               child: Opacity(
                                 opacity: pending ? 0.6 : 1,
-                                child: Stack(
+                                child: GestureDetector(
+                                  onLongPress: isMine && !pending
+                                      ? () => _showMessageOptions(message, editable: attachment == null)
+                                      : null,
+                                  child: Stack(
                                 clipBehavior: Clip.none,
                                 children: [
                                   if (attachment != null)
@@ -306,9 +420,28 @@ class _ChatScreenState extends State<ChatScreen> {
                                         bottomRight: Radius.circular(isMine ? 4 : 16),
                                       ),
                                     ),
-                                    child: Text(
-                                      message.text,
-                                      style: TextStyle(color: isMine ? onColor(accent) : theme.colorScheme.onSurface),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          message.text,
+                                          style: TextStyle(color: isMine ? onColor(accent) : theme.colorScheme.onSurface),
+                                        ),
+                                        if (message.editedAt != null)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 2),
+                                            child: Text(
+                                              context.tr('message_edited_tag'),
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontStyle: FontStyle.italic,
+                                                color: (isMine ? onColor(accent) : theme.colorScheme.onSurface)
+                                                    .withOpacity(0.6),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   ),
                                   Positioned(
@@ -337,7 +470,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                     ),
                                   ),
                                 ],
-                              ),
+                                  ),
+                                ),
                               ),
                             ),
                           );
@@ -806,6 +940,8 @@ class _VoiceMessageBubble extends StatefulWidget {
 }
 
 class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
+  static const _progressBarWidth = 130.0;
+
   AudioPlayer? _player;
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<Duration>? _positionSub;
@@ -875,6 +1011,20 @@ class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
     }
   }
 
+  Future<void> _seekToFraction(double fraction) async {
+    final total = _totalDuration ?? Duration(seconds: widget.attachment.durationSeconds);
+    if (total == Duration.zero) return;
+    final target = total * fraction.clamp(0.0, 1.0);
+    var player = _player;
+    if (player == null) {
+      // Not loaded yet — load (which also starts playback from zero),
+      // then jump to the tapped position once the player is ready.
+      await _toggle();
+      player = _player;
+    }
+    await player?.seek(target);
+  }
+
   @override
   Widget build(BuildContext context) {
     final total = _totalDuration ?? Duration(seconds: widget.attachment.durationSeconds);
@@ -908,21 +1058,29 @@ class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
               ),
               const SizedBox(width: 8),
               SizedBox(
-                width: 130,
+                width: _progressBarWidth,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(2),
-                      child: LinearProgressIndicator(
-                        value: progress,
-                        minHeight: 3,
-                        backgroundColor: widget.foreground.withOpacity(0.25),
-                        valueColor: AlwaysStoppedAnimation(widget.foreground),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (details) => _seekToFraction(
+                        details.localPosition.dx / _progressBarWidth,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            minHeight: 3,
+                            backgroundColor: widget.foreground.withOpacity(0.25),
+                            valueColor: AlwaysStoppedAnimation(widget.foreground),
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 4),
                     Row(
                       children: [
                         Icon(Icons.lock, size: 11, color: widget.foreground.withOpacity(0.75)),

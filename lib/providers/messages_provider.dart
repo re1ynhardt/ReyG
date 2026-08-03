@@ -220,6 +220,93 @@ class MessagesProvider extends ChangeNotifier {
     await _api.markThreadRead(otherUserId);
   }
 
+  /// Edits a message THIS account sent, in-place in the open thread —
+  /// optimistic (the bubble updates immediately), reverted if the
+  /// backend call fails. Yandex Storage-only, same restriction as
+  /// [uploadImageAttachment] above.
+  Future<void> editMessage({
+    required String otherUserId,
+    required String messageId,
+    required String newText,
+  }) async {
+    final api = _api;
+    if (api is! YandexStorageApiService) {
+      throw StateError('Editing messages isn\'t supported on this backend');
+    }
+    final current = messagesWith(otherUserId);
+    final index = current.indexWhere((m) => m.id == messageId);
+    if (index == -1) return;
+    final original = current[index];
+    final optimistic = DirectMessage(
+      id: original.id,
+      senderId: original.senderId,
+      recipientId: original.recipientId,
+      text: newText.trim(),
+      createdAt: original.createdAt,
+      editedAt: DateTime.now(),
+    );
+    _threads[otherUserId] = [
+      for (var i = 0; i < current.length; i++) if (i == index) optimistic else current[i],
+    ];
+    notifyListeners();
+    try {
+      final updated = await api.editMessage(
+        messageId: messageId,
+        otherUserId: otherUserId,
+        newText: newText,
+      );
+      final latest = messagesWith(otherUserId);
+      final latestIndex = latest.indexWhere((m) => m.id == messageId);
+      if (latestIndex != -1) {
+        _threads[otherUserId] = [
+          for (var i = 0; i < latest.length; i++) if (i == latestIndex) updated else latest[i],
+        ];
+        unawaited(CacheService.instance.setCachedMessages(otherUserId, _threads[otherUserId]!));
+        notifyListeners();
+      }
+    } catch (_) {
+      final latest = messagesWith(otherUserId);
+      final latestIndex = latest.indexWhere((m) => m.id == messageId);
+      if (latestIndex != -1) {
+        _threads[otherUserId] = [
+          for (var i = 0; i < latest.length; i++) if (i == latestIndex) original else latest[i],
+        ];
+        notifyListeners();
+      }
+      rethrow;
+    }
+  }
+
+  /// Deletes a message THIS account sent, for both sides of the
+  /// conversation — optimistic (removed from the thread immediately),
+  /// restored at its original position if the backend call fails.
+  /// Yandex Storage-only, same restriction as [uploadImageAttachment].
+  Future<void> deleteMessage({required String otherUserId, required String messageId}) async {
+    final api = _api;
+    if (api is! YandexStorageApiService) {
+      throw StateError('Deleting messages isn\'t supported on this backend');
+    }
+    final current = messagesWith(otherUserId);
+    final index = current.indexWhere((m) => m.id == messageId);
+    if (index == -1) return;
+    final removed = current[index];
+    _threads[otherUserId] = current.where((m) => m.id != messageId).toList();
+    notifyListeners();
+    try {
+      await api.deleteMessage(messageId: messageId);
+      unawaited(CacheService.instance.setCachedMessages(otherUserId, _threads[otherUserId]!));
+      // The conversation list's preview may have been showing this exact
+      // message — refresh it quietly so it doesn't keep showing deleted
+      // text as the "last message".
+      unawaited(refreshConversationsQuietly());
+    } catch (_) {
+      final latest = messagesWith(otherUserId);
+      _threads[otherUserId] = [...latest.take(index), removed, ...latest.skip(index)];
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   /// Uploads [localImagePath] and returns a [MessageAttachment.image]
   /// ready to stage in the composer (same shape as picking a track or
   /// playlist in [AttachPickerSheet]). Only supported when running

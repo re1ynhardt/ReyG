@@ -37,6 +37,13 @@ dependencies:
   # Picking audio/cover files for the in-app developer uploader
   file_picker: ^8.0.0+1
 
+  # System (phone-shade) notifications for new incoming direct messages —
+  # see lib/services/message_notification_service.dart. Local-notification
+  # based: this app has no server component (only Yandex Object Storage),
+  # so there's nothing to send a real FCM/APNs push — instead the app
+  # polls Yandex Storage while it's running and raises one of these itself.
+  flutter_local_notifications: ^18.0.1
+
   # Disk-backed cache for network images (track/playlist covers, avatars) —
   # without this, Image.network only caches in memory for the current app
   # session, so covers get re-downloaded from scratch on every app restart
