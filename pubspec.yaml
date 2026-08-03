@@ -1,7 +1,7 @@
 name: audio_player_app
 description: "flutter audio player with back playback and back on the flut"
 publish_to: 'none'
-version: 1.5.0+4
+version: 1.5.3+4
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -88,6 +88,18 @@ dependencies:
   # `record` meta-package pulls in all platform implementations
   # unconditionally. 6.x fixed that pairing.
   record: ^6.0.0
+
+  # Records round video messages ("кружки") for chat (see ChatScreen's
+  # camera button) — same trust model as voice notes: the recording is
+  # encrypted client-side before upload (see
+  # YandexStorageApiService.uploadChatVideoNote / E2EEService.encryptBytes)
+  # so this package only ever handles the plaintext locally.
+  camera: ^0.11.0+2
+
+  # Plays back decrypted round video messages inside the chat bubble
+  # (see ChatScreen's _VideoNoteMessageBubble). The voice-note player
+  # (just_audio) is audio-only, so video notes need their own player.
+  video_player: ^2.9.2
 
 dev_dependencies:
   flutter_test:

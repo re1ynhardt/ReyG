@@ -1,0 +1,234 @@
+import 'package:audio_service/audio_service.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:rxdart/rxdart.dart';
+import '../models/track.dart';
+import 'download_service.dart';
+import 'stream_cache_service.dart';
+
+/// Custom [BaseAudioHandler] wrapping just_audio's [AudioPlayer].
+///
+/// Unlike `just_audio_background` (which only exposes play/pause/skip in
+/// the system notification), this handler adds a REAL, tappable "repeat"
+/// button with its own icon straight into the Android notification shade
+/// and lock screen — see [_transformState] and the `ic_repeat_*` drawables
+/// referenced there (must be added under
+/// `android/app/src/main/res/drawable/`, see README notes).
+///
+/// Tapping that notification button calls [customAction] with name
+/// `'repeat'`, which is the exact same code path the in-app repeat button
+/// uses (via `AudioPlayerService.cycleLoopMode`), so both stay in sync.
+class HarmonyAudioHandler extends BaseAudioHandler with SeekHandler {
+  HarmonyAudioHandler() {
+    _init();
+  }
+
+  // Capped to ~10s ahead of the current position (instead of just_audio's
+  // default, which happily buffers 50+ seconds — often most of a short
+  // track — the moment playback starts). Saves mobile data: skipping away
+  // from a track a few seconds in now only ever costs ~10s of audio, not
+  // however much the default buffer had already pulled in.
+  // Note: these are hints, not hard caps — ExoPlayer/AVFoundation may
+  // occasionally buffer a little past them, but this cuts normal
+  // over-fetching drastically compared to the defaults.
+  final AudioPlayer player = AudioPlayer(
+    audioLoadConfiguration: const AudioLoadConfiguration(
+      androidLoadControl: AndroidLoadControl(
+        minBufferDuration: Duration(seconds: 10),
+        maxBufferDuration: Duration(seconds: 15),
+        bufferForPlaybackDuration: Duration(seconds: 2),
+        bufferForPlaybackAfterRebufferDuration: Duration(seconds: 5),
+      ),
+      darwinLoadControl: DarwinLoadControl(
+        preferredForwardBufferDuration: Duration(seconds: 10),
+      ),
+    ),
+  );
+  List<Track> _tracks = [];
+
+  List<Track> get tracks => _tracks;
+
+  Track? get currentTrack {
+    final index = player.currentIndex;
+    if (index == null || index < 0 || index >= _tracks.length) return null;
+    return _tracks[index];
+  }
+
+  void _init() {
+    // Recompute the full PlaybackState (and therefore the notification)
+    // every time playback position/state, playing flag, or loop mode
+    // changes — this is what makes the repeat icon update live.
+    Rx.combineLatest3<PlaybackEvent, bool, LoopMode, PlaybackState>(
+      player.playbackEventStream,
+      player.playingStream,
+      player.loopModeStream,
+      _transformState,
+    ).pipe(playbackState);
+
+    player.currentIndexStream.listen((index) {
+      if (index != null && index >= 0 && index < _tracks.length) {
+        mediaItem.add(_toMediaItem(_tracks[index]));
+      }
+    });
+  }
+
+  PlaybackState _transformState(PlaybackEvent event, bool playing, LoopMode loopMode) {
+    // Same custom action name ('repeat') for all three icons — only the
+    // icon/label changes depending on the current loop mode, exactly like
+    // Spotify/YouTube Music do it.
+    final repeatControl = switch (loopMode) {
+      LoopMode.off => MediaControl.custom(
+          androidIcon: 'drawable/ic_repeat_off',
+          label: 'Repeat off',
+          name: 'repeat',
+        ),
+      LoopMode.all => MediaControl.custom(
+          androidIcon: 'drawable/ic_repeat_all',
+          label: 'Repeat all',
+          name: 'repeat',
+        ),
+      LoopMode.one => MediaControl.custom(
+          androidIcon: 'drawable/ic_repeat_one',
+          label: 'Repeat one',
+          name: 'repeat',
+        ),
+    };
+
+    return PlaybackState(
+      controls: [
+        MediaControl.skipToPrevious,
+        if (playing) MediaControl.pause else MediaControl.play,
+        MediaControl.skipToNext,
+        repeatControl,
+      ],
+      systemActions: const {
+        MediaAction.seek,
+        MediaAction.seekForward,
+        MediaAction.seekBackward,
+      },
+      // Android's COLLAPSED notification only fits 3 buttons. This shows
+      // previous / play-pause / repeat there; "next" is still reachable
+      // by expanding the notification. Swap indices if you'd rather show
+      // next instead of previous, e.g. [1, 2, 3].
+      androidCompactActionIndices: const [0, 1, 3],
+      processingState: const {
+        ProcessingState.idle: AudioProcessingState.idle,
+        ProcessingState.loading: AudioProcessingState.loading,
+        ProcessingState.buffering: AudioProcessingState.buffering,
+        ProcessingState.ready: AudioProcessingState.ready,
+        ProcessingState.completed: AudioProcessingState.completed,
+      }[event.processingState]!,
+      playing: playing,
+      updatePosition: player.position,
+      bufferedPosition: player.bufferedPosition,
+      speed: player.speed,
+      queueIndex: event.currentIndex,
+    );
+  }
+
+  MediaItem _toMediaItem(Track t) => MediaItem(
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        album: t.album,
+        artUri: Uri.tryParse(t.coverUrl),
+        duration: t.duration,
+      );
+
+  Future<void> loadQueue(List<Track> tracks, {required int startIndex}) async {
+    _tracks = tracks;
+    queue.add(tracks.map(_toMediaItem).toList());
+    final children = await Future.wait(tracks.map(_audioSourceFor));
+    final source = ConcatenatingAudioSource(children: children);
+    await player.setAudioSource(source, initialIndex: startIndex);
+    await play();
+  }
+
+  /// Prefers a cached on-device copy of [t] (offline playback) over
+  /// streaming it, falling back to streaming it from the network when it
+  /// isn't cached.
+  ///
+  /// Streamed tracks go through [LockCachingAudioSource], which writes
+  /// every downloaded byte to [StreamCacheService]'s file for [t] as it
+  /// arrives during playback. That's what makes replaying the same track
+  /// later — on repeat or not — free: if that file is already complete
+  /// from a previous play, just_audio reads it straight off disk instead
+  /// of hitting Yandex Storage again.
+  Future<AudioSource> _audioSourceFor(Track t) async {
+    final localPath = await DownloadService.instance.cachedFilePath(t.id);
+    if (localPath != null) {
+      return AudioSource.uri(Uri.file(localPath), tag: t.id);
+    }
+    final cacheFile = await StreamCacheService.fileFor(t);
+    return LockCachingAudioSource(
+      Uri.parse(t.audioUrl),
+      cacheFile: cacheFile,
+      tag: t.id,
+    );
+  }
+
+  @override
+  Future<void> play() => player.play();
+
+  @override
+  Future<void> pause() => player.pause();
+
+  @override
+  Future<void> seek(Duration position) => player.seek(position);
+
+  @override
+  Future<void> skipToNext() async {
+    // NOTE: intentionally not using player.hasNext / player.seekToNext()
+    // here — just_audio's implementation of those takes loopMode into
+    // account, so with LoopMode.one ("repeat one") it just restarts the
+    // current track instead of advancing. The next/previous buttons
+    // should always move through the queue regardless of repeat mode,
+    // so we compute the target index ourselves and seek to it directly.
+    final current = player.currentIndex;
+    if (current == null) return;
+    final length = player.sequence?.length ?? 0;
+    if (current + 1 < length) {
+      await player.seek(Duration.zero, index: current + 1);
+    }
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    // Restart the current track instead of jumping back if we're more
+    // than 3 seconds in — matches Apple Music behaviour.
+    if (player.position > const Duration(seconds: 3)) {
+      await player.seek(Duration.zero);
+      return;
+    }
+    // See note in skipToNext: avoid player.hasPrevious / seekToPrevious()
+    // since they're affected by LoopMode.one and won't move off the
+    // current track.
+    final current = player.currentIndex;
+    if (current == null) return;
+    if (current > 0) {
+      await player.seek(Duration.zero, index: current - 1);
+    } else {
+      await player.seek(Duration.zero);
+    }
+  }
+
+  @override
+  Future<void> stop() async {
+    await player.stop();
+    return super.stop();
+  }
+
+  /// Handles taps on the custom repeat button — both from the system
+  /// notification AND from `AudioPlayerService.cycleLoopMode()` in-app.
+  @override
+  Future<dynamic> customAction(String name, [Map<String, dynamic>? extras]) async {
+    if (name == 'repeat') {
+      final next = switch (player.loopMode) {
+        LoopMode.off => LoopMode.all,
+        LoopMode.all => LoopMode.one,
+        LoopMode.one => LoopMode.off,
+      };
+      await player.setLoopMode(next);
+    }
+    return super.customAction(name, extras);
+  }
+}

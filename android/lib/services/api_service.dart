@@ -1,0 +1,306 @@
+import '../models/track.dart';
+import '../models/playlist.dart';
+import '../models/user.dart';
+import '../models/app_notification.dart';
+import '../models/message.dart';
+
+/// Every screen in the app talks to the backend ONLY through this
+/// interface. Today [MockApiService] answers with fake in-memory data.
+/// Later, drop in [RemoteApiService] (see remote_api_service.dart) which
+/// hits your real Python backend over HTTP — no UI code needs to change.
+abstract class ApiService {
+  // --- Auth -----------------------------------------------------------
+  Future<AppUser> login({required String email, required String password});
+  Future<AppUser> register({
+    required String email,
+    required String password,
+    required String displayName,
+  });
+
+  /// Called once after a session is restored from local storage (app
+  /// reopened, user already logged in previously) so the backend knows
+  /// who's "current" without requiring another login. Implementations
+  /// that don't need this (e.g. the mock) can leave it a no-op.
+  void restoreSession(AppUser user);
+
+  // --- Tracks -----------------------------------------------------------
+  Future<List<Track>> fetchTracks();
+  Future<List<Track>> searchTracks(String query);
+
+  /// Requirement #11: developer accounts can push a track straight from
+  /// the app instead of using the admin script / server.
+  Future<Track> uploadTrack({
+    required String title,
+    required String artist,
+    required String album,
+    required String localAudioPath,
+    String? localCoverPath,
+  });
+
+  /// Developer-only: permanently removes a track from the catalog (and,
+  /// where possible, the underlying audio/cover files too), plus every
+  /// reference to it in playlists and favorites, everywhere in the app.
+  Future<void> deleteTrack(String trackId);
+
+  /// Fetches the lyrics text for [track], or returns null if none has
+  /// been added yet. Lyrics are stored as a text object in Yandex
+  /// Storage — this reads that object (lazily, only when the lyrics
+  /// panel is opened), not a database.
+  Future<String?> fetchLyrics(Track track);
+
+  /// Developer, support, or performer accounts only: uploads/overwrites
+  /// the lyrics text for a track and returns the updated [Track] (with
+  /// `lyricsUrl` populated).
+  Future<Track> setLyrics({required String trackId, required String lyrics});
+
+  /// Adds [hashtag] (without the leading '#') to [trackId]'s hashtags and
+  /// returns the updated [Track]. Any signed-in user may call this.
+  /// Implementations enforce [Track.maxHashtags] and
+  /// [Track.maxHashtagLength] server-side too, as a safety net behind
+  /// whatever the UI already checks before calling this.
+  Future<Track> addHashtag({required String trackId, required String hashtag});
+
+  /// Removes [hashtag] from [trackId]'s hashtags and returns the updated
+  /// [Track]. Admin/developer accounts only — implementations reject this
+  /// for regular users.
+  Future<Track> removeHashtag({required String trackId, required String hashtag});
+
+  // --- Playlists --------------------------------------------------------
+  Future<List<Playlist>> fetchPlaylists();
+  Future<Playlist> createPlaylist(String name);
+
+  /// Renames a playlist owned by the current user and returns the
+  /// updated [Playlist]. Implementations should reject an empty
+  /// [newName] and enforce ownership the same way [deletePlaylist] does.
+  Future<Playlist> renamePlaylist({required String playlistId, required String newName});
+
+  Future<void> addTrackToPlaylist({required String playlistId, required String trackId});
+  Future<void> removeTrackFromPlaylist({required String playlistId, required String trackId});
+  Future<void> deletePlaylist(String playlistId);
+
+  /// Uploads a custom cover image for a playlist owned by the current
+  /// user and returns the updated [Playlist] (with the new `coverUrl`
+  /// populated). Callers are expected to enforce the 5 MB size limit and
+  /// reject GIFs before calling this — see [ApiException] thrown by
+  /// implementations that also enforce these rules server-side/storage-side
+  /// as a safety net.
+  Future<Playlist> uploadPlaylistCover({required String playlistId, required String localImagePath});
+
+  /// Clears a playlist's custom cover (`coverUrl` goes back to `''`), so
+  /// the UI falls back to showing the most recently added track's cover
+  /// instead. Returns the updated [Playlist].
+  Future<Playlist> removePlaylistCover({required String playlistId});
+
+  // --- Favorites ----------------------------------------------------------
+  Future<List<String>> fetchFavoriteIds();
+  Future<void> setFavorite({required String trackId, required bool favorite});
+
+  // --- Account ------------------------------------------------------------
+  /// Uploads a custom avatar image for the current user and returns the
+  /// updated [AppUser] (with the new `avatarUrl` populated). Callers are
+  /// expected to enforce the 5 MB size limit before calling this — see
+  /// [ApiException] thrown by implementations that also enforce it
+  /// server-side/storage-side as a safety net.
+  Future<AppUser> uploadAvatar(String localImagePath);
+
+  /// Uploads a custom profile banner image for the current user and
+  /// returns the updated [AppUser] (with the new `bannerUrl` populated).
+  /// Callers are expected to enforce the 5 MB size limit before calling
+  /// this — see [ApiException] thrown by implementations that also
+  /// enforce it server-side/storage-side as a safety net.
+  Future<AppUser> uploadBanner(String localImagePath);
+
+  // --- Community ------------------------------------------------------------
+  /// Every registered account, for the Community tab. Returned tokens are
+  /// always blank (this isn't the current session, so there's nothing to
+  /// restore) — only [AppUser.displayName], [AppUser.avatarUrl],
+  /// [AppUser.isDeveloper] and [AppUser.bio] are meant to be shown in
+  /// that list (and on the per-account profile screen it opens into).
+  Future<List<AppUser>> fetchAllUsers();
+
+  /// Tracks [userId] has liked (favorited), newest-liked first. Used by
+  /// the Community profile screen's "Tracks" tile — that shows the
+  /// account's liked songs, not their uploads.
+  Future<List<Track>> fetchFavoriteTracksByUser(String userId);
+
+  /// Playlists owned by [userId]. Used by the Community profile screen —
+  /// read-only there; only the owner can modify their own playlists via
+  /// [fetchPlaylists] / [addTrackToPlaylist] / etc.
+  Future<List<Playlist>> fetchPlaylistsByUser(String userId);
+
+  /// Developer-only: permanently deletes the account [userId] — its user
+  /// row, every playlist it owns (and, where possible, their cover
+  /// files), every favorites entry it made, and its avatar file. Does
+  /// NOT touch tracks it may have uploaded to the shared catalog (those
+  /// stay available to everyone else). Implementations reject this for
+  /// non-developer callers.
+  Future<void> deleteUserAccount(String userId);
+
+  /// Developer-only: sets [userId]'s password to [newPassword] without
+  /// requiring their old one. Mirrors [setPassword] but targets another
+  /// account — used by the developer debug sheet on a user's Community
+  /// profile. Throws [ApiException] if [newPassword] is empty or the
+  /// caller isn't a developer.
+  Future<void> setUserPassword({required String userId, required String newPassword});
+
+  /// IDs of accounts the current user has marked as a favorite. This is
+  /// per-account (each user keeps their own list) and separate from
+  /// [fetchFavoriteIds], which is liked *tracks*. Used to pin favorite
+  /// accounts to the top of the Community tab.
+  Future<List<String>> fetchFavoriteUserIds();
+
+  /// Marks/unmarks [userId] as a favorite account for the current user.
+  Future<void> setFavoriteUser({required String userId, required bool favorite});
+
+  /// Number of accounts that have favorited [userId] — i.e. their fan/
+  /// subscriber count, shown as the "Favorites" stat on their Community
+  /// profile.
+  Future<int> fetchFavoriteUserCount(String userId);
+
+  /// Developer-only — unlike most "developer-only" methods here, support
+  /// accounts may NOT call this one either. Re-applies the current
+  /// developer/support/performer email lists (see [ApiService]'s
+  /// implementations and their config) to every registered account, so
+  /// an account whose role changed in a newer build of the app (e.g. an
+  /// email that's now in the support list but registered before support
+  /// existed) gets its stored role flags brought in line with the app's
+  /// config, without needing to delete and re-register that account.
+  /// Returns the number of accounts whose role flags actually changed.
+  /// Throws [ApiException] for any non-developer caller.
+  Future<int> syncAccountRoles();
+
+  /// Developer/support-only: publishes a new in-app-update build straight
+  /// from the app — uploads [localApkPath] to the public `app/latest.apk`
+  /// object, then writes `app/update.json` (see [UpdateService]) with the
+  /// given metadata, in that order, so `update.json` is only ever pointing
+  /// at an APK that's already fully uploaded. Throws [ApiException] for
+  /// any caller without developer/support rights.
+  Future<void> publishAppUpdate({
+    required String localApkPath,
+    required String version,
+    required int buildNumber,
+    required String notes,
+    required bool mandatory,
+  });
+
+  // --- Privacy --------------------------------------------------------------
+  /// Updates the current user's setting for who can see their liked
+  /// tracks and playlists on their Community profile (one of the
+  /// [LikesPrivacy] values) and returns the updated [AppUser].
+  Future<AppUser> setLikesPrivacy(String privacy);
+
+  /// Whether the current session is allowed to see [userId]'s liked
+  /// tracks and playlists on their Community profile, based on that
+  /// user's [LikesPrivacy] setting. Always true for the user's own
+  /// profile and for developer accounts, which can see everyone's
+  /// regardless of the setting.
+  Future<bool> canViewUserLibrary(String userId);
+
+  /// Changes the current user's password to [newPassword]. No old
+  /// password is required — the caller is already authenticated via the
+  /// active session. Throws [ApiException] if [newPassword] is empty.
+  Future<void> setPassword(String newPassword);
+
+  /// Sets the current user's profile description, shown under their
+  /// avatar on their Community profile. Throws [ApiException] if [bio]
+  /// is longer than [AppUser.bioMaxLength]. Pass `''` to clear it.
+  Future<AppUser> setBio(String bio);
+
+  /// Changes the current user's display name (nickname), shown
+  /// throughout the app and on their Community profile. Throws
+  /// [ApiException] if [displayName] is empty (after trimming) or
+  /// longer than [AppUser.displayNameMaxLength].
+  Future<AppUser> setDisplayName(String displayName);
+
+  /// Sets the current user's PUBLIC profile accent theme — a storage key
+  /// from [AppThemeOption] (see lib/theme/app_theme.dart) — shown on
+  /// their Community profile to every viewer, unlike [AppState]'s local
+  /// app theme which only affects how the app looks to that user
+  /// themselves. Throws [ApiException] for an unrecognized key.
+  Future<AppUser> setProfileTheme(String themeKey);
+
+  // --- Featured tags (Home screen) ----------------------------------------
+  /// The 4 hashtags currently pinned to the Home screen, in display order.
+  /// Same list for every account — always length 4, with `''` marking an
+  /// unset slot. Implementations should return 4 empty strings before any
+  /// developer has configured them.
+  Future<List<String>> fetchFeaturedTags();
+
+  /// Developer-only: overwrites the 4 featured-tag slots (pass `''` to
+  /// clear a slot) and returns the resulting list. Implementations reject
+  /// this for non-developer accounts and validate each non-empty tag the
+  /// same way [addHashtag] does.
+  Future<List<String>> setFeaturedTags(List<String> tags);
+
+  // --- Notifications ----------------------------------------------------
+  /// All broadcast notifications, newest first. Same list for every
+  /// account — shown in the notifications shade off the Home screen.
+  Future<List<AppNotification>> fetchNotifications();
+
+  /// Strictly developer-only (not support, not performer): posts a new
+  /// broadcast notification visible to every user. Implementations reject
+  /// this for any other account type.
+  Future<AppNotification> sendNotification({required String title, required String body});
+
+  /// Strictly developer-only: permanently removes a broadcast
+  /// notification. Implementations reject this for any other account type.
+  Future<void> deleteNotification(String id);
+
+  // --- Artists --------------------------------------------------------
+  /// Developer-set circular avatar URLs, keyed by exact artist name.
+  /// Artists with no entry (or an empty value) have no custom avatar set
+  /// — the UI falls back to that artist's most recently uploaded track
+  /// cover instead (see `LibraryProvider.avatarForArtist`).
+  Future<Map<String, String>> fetchArtistAvatars();
+
+  /// Developer-only: uploads/overwrites the avatar image for [artist]
+  /// and returns its new public URL. Callers are expected to enforce the
+  /// 5 MB size limit (and reject GIFs) before calling this, same as
+  /// [uploadPlaylistCover] — implementations enforce it server-side/
+  /// storage-side too as a safety net. Throws [ApiException] for
+  /// non-developer accounts.
+  Future<String> uploadArtistAvatar({required String artist, required String localImagePath});
+
+  /// Developer-only: clears [artist]'s custom avatar, reverting the UI
+  /// to falling back on their most recent track cover again. Throws
+  /// [ApiException] for non-developer accounts.
+  Future<void> removeArtistAvatar(String artist);
+
+  // --- Messages ---------------------------------------------------------
+  /// One entry per account the current user has exchanged direct messages
+  /// with, newest conversation first. Returned text is always plaintext —
+  /// implementations that encrypt at rest (the real backend) decrypt
+  /// before returning. Join [ConversationSummary.otherUserId] against the
+  /// Community user list to show that conversation's name/avatar.
+  Future<List<ConversationSummary>> fetchConversations();
+
+  /// Every message exchanged between the current user and [otherUserId],
+  /// oldest first. Returned text is always plaintext, decrypted already
+  /// where the implementation encrypts at rest.
+  Future<List<DirectMessage>> fetchMessages(String otherUserId);
+
+  /// Sends a message from the current user to [recipientId] and returns
+  /// it. Throws [ApiException] if [text] is empty (after trimming),
+  /// longer than [DirectMessage.maxLength], [recipientId] doesn't exist,
+  /// or [recipientId] is the current user. Implementations that support
+  /// end-to-end encryption (the real backend) may also throw
+  /// [ApiException] if the recipient hasn't published an encryption key
+  /// yet (i.e. has never opened Messages).
+  Future<DirectMessage> sendMessage({required String recipientId, required String text});
+
+  /// Records that the current user has read every message from
+  /// [otherUserId] up through now. Drives both the current user's own
+  /// unread badge and — since this is visible to the other account too —
+  /// the read/delivered ticks [otherUserId] sees on messages they sent.
+  /// Safe to call repeatedly (e.g. every time a thread is opened).
+  Future<void> markThreadRead(String otherUserId);
+
+  /// For each conversation partner, the timestamp up to which that
+  /// account has read messages sent to them by the current user. A
+  /// partner with no entry has never opened that thread (or Messages at
+  /// all) — every message sent to them still shows as unread. Used to
+  /// render read/delivered ticks in the conversation list and in a chat
+  /// thread: a sent message counts as read once its `createdAt` is at or
+  /// before the matching timestamp here.
+  Future<Map<String, DateTime>> fetchReadReceipts();
+}

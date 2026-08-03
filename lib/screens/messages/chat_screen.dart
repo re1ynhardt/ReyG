@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
+import 'package:video_player/video_player.dart';
 import '../../models/message.dart';
 import '../../models/message_attachment.dart';
 import '../../providers/app_state.dart';
@@ -61,6 +65,7 @@ class _ChatScreenState extends State<ChatScreen> {
   static const _maxRecordingDuration = Duration(minutes: 10);
   bool _isRecording = false;
   bool _isUploadingVoice = false;
+  bool _isUploadingVideoNote = false;
   DateTime? _recordingStartedAt;
   Timer? _recordTicker;
   Duration _recordingElapsed = Duration.zero;
@@ -116,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _controller.text.trim();
     final pending = _pendingAttachment;
     if (pending == null && text.isEmpty) return;
+    HapticFeedback.lightImpact();
 
     final messageText = pending != null ? pending.withCaption(text).encode() : text;
     final myId = context.read<AuthProvider>().user?.id;
@@ -229,7 +235,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _startRecording() async {
-    if (_isRecording || _isUploadingVoice) return;
+    if (_isRecording || _isUploadingVoice || _isUploadingVideoNote) return;
     final hasPermission = await _recorder.hasPermission();
     if (!hasPermission) {
       if (!mounted) return;
@@ -240,6 +246,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final path = '${dir.path}/voice_${DateTime.now().microsecondsSinceEpoch}.m4a';
     await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
     if (!mounted) return;
+    HapticFeedback.mediumImpact();
     setState(() {
       _isRecording = true;
       _recordingPath = path;
@@ -260,6 +267,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _cancelRecording() async {
+    HapticFeedback.selectionClick();
     _recordTicker?.cancel();
     final path = await _recorder.stop();
     if (mounted) setState(() => _isRecording = false);
@@ -312,6 +320,41 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+
+  /// Opens the round-video-message recorder ("кружок"); on success
+  /// encrypts and uploads it exactly like [_stopAndSendRecording] does
+  /// for voice notes (same E2EE pipeline, see
+  /// [MessagesProvider.uploadVideoNoteAttachment]), then sends it.
+  Future<void> _openVideoNoteRecorder() async {
+    if (_isRecording || _isUploadingVoice || _isUploadingVideoNote) return;
+    final result = await Navigator.of(context).push<(String, int)>(
+      MaterialPageRoute(builder: (_) => const _VideoNoteRecorderScreen(), fullscreenDialog: true),
+    );
+    if (result == null || !mounted) return;
+    final (path, durationSeconds) = result;
+    final myId = context.read<AuthProvider>().user?.id;
+    if (myId == null) return;
+    setState(() => _isUploadingVideoNote = true);
+    try {
+      final attachment = await context.read<MessagesProvider>().uploadVideoNoteAttachment(
+            path,
+            recipientId: widget.otherUserId,
+            durationSeconds: durationSeconds,
+          );
+      await context
+          .read<MessagesProvider>()
+          .send(otherUserId: widget.otherUserId, text: attachment.encode(), myId: myId);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+      if (mounted) setState(() => _isUploadingVideoNote = false);
+    }
+  }
 
   Future<void> _openAttachPicker() async {
     final attachment = await showModalBottomSheet<MessageAttachment>(
@@ -386,6 +429,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           final attachment = MessageAttachment.tryParse(message.text);
                           final pending = isMine && messagesProvider.isPending(message.id);
                           return Align(
+                            key: ValueKey(message.id),
                             alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
                             child: Padding(
                               padding: const EdgeInsets.only(bottom: 8),
@@ -395,7 +439,15 @@ class _ChatScreenState extends State<ChatScreen> {
                                   onLongPress: isMine && !pending
                                       ? () => _showMessageOptions(message, editable: attachment == null)
                                       : null,
-                                  child: Stack(
+                                  child: TweenAnimationBuilder<double>(
+                                    tween: Tween(begin: 0, end: 1),
+                                    duration: const Duration(milliseconds: 220),
+                                    curve: Curves.easeOut,
+                                    builder: (context, t, child) => Opacity(
+                                      opacity: t,
+                                      child: Transform.translate(offset: Offset(0, (1 - t) * 10), child: child),
+                                    ),
+                                    child: Stack(
                                 clipBehavior: Clip.none,
                                 children: [
                                   if (attachment != null)
@@ -471,6 +523,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                 ],
                                   ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -493,6 +546,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     )
                   else if (_isUploadingVoice)
                     _UploadingVoiceBar(theme: theme)
+                  else if (_isUploadingVideoNote)
+                    _UploadingVideoBar(theme: theme)
                   else ...[
                     if (_pendingAttachment != null)
                       Padding(
@@ -537,30 +592,73 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Material(
-                          color: theme.cardColor,
-                          shape: const CircleBorder(),
-                          child: InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: _startRecording,
-                            child: Padding(
-                              padding: const EdgeInsets.all(10),
-                              child: Icon(Icons.mic_none_rounded, size: 20, color: theme.hintColor),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Material(
-                          color: accent,
-                          shape: const CircleBorder(),
-                          child: InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: _send,
-                            child: Padding(
-                              padding: const EdgeInsets.all(10),
-                              child: Icon(Icons.send, size: 20, color: onColor(accent)),
-                            ),
-                          ),
+                        // Swaps between camera+mic and send depending on whether
+                        // there's anything to send yet — mirrors how every
+                        // mainstream messenger's composer behaves, and means the
+                        // person is never staring at a send button that does
+                        // nothing. Listens to the controller directly (instead of
+                        // a setState in a text listener) so only this small
+                        // subtree rebuilds on each keystroke, not the whole
+                        // screen.
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, _) {
+                            final hasContent = _controller.text.trim().isNotEmpty || _pendingAttachment != null;
+                            return AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 180),
+                              switchInCurve: Curves.easeOutBack,
+                              switchOutCurve: Curves.easeIn,
+                              transitionBuilder: (child, animation) => ScaleTransition(
+                                scale: animation,
+                                child: FadeTransition(opacity: animation, child: child),
+                              ),
+                              child: hasContent
+                                  ? Material(
+                                      key: const ValueKey('send'),
+                                      color: accent,
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        customBorder: const CircleBorder(),
+                                        onTap: _send,
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(10),
+                                          child: Icon(Icons.send, size: 20, color: onColor(accent)),
+                                        ),
+                                      ),
+                                    )
+                                  : Row(
+                                      key: const ValueKey('mic_camera'),
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Material(
+                                          color: theme.cardColor,
+                                          shape: const CircleBorder(),
+                                          child: InkWell(
+                                            customBorder: const CircleBorder(),
+                                            onTap: _openVideoNoteRecorder,
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(10),
+                                              child: Icon(Icons.videocam_outlined, size: 20, color: theme.hintColor),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Material(
+                                          color: theme.cardColor,
+                                          shape: const CircleBorder(),
+                                          child: InkWell(
+                                            customBorder: const CircleBorder(),
+                                            onTap: _startRecording,
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(10),
+                                              child: Icon(Icons.mic_none_rounded, size: 20, color: theme.hintColor),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -644,6 +742,29 @@ class _UploadingVoiceBar extends StatelessWidget {
           const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
           const SizedBox(width: 12),
           Text(context.tr('sending_voice_message'), style: TextStyle(color: theme.hintColor)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Same as [_UploadingVoiceBar], shown while a just-recorded round video
+/// message is being encrypted and uploaded (see
+/// ChatScreen._openVideoNoteRecorder).
+class _UploadingVideoBar extends StatelessWidget {
+  const _UploadingVideoBar({required this.theme});
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(color: theme.cardColor, borderRadius: BorderRadius.circular(24)),
+      child: Row(
+        children: [
+          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(width: 12),
+          Text(context.tr('sending_video_message'), style: TextStyle(color: theme.hintColor)),
         ],
       ),
     );
@@ -756,6 +877,10 @@ class _AttachmentBubble extends StatelessWidget {
         background: isMine ? theme.colorScheme.secondary : theme.cardColor,
         borderRadius: borderRadius,
       );
+    }
+
+    if (attachment.isVideoNote) {
+      return _VideoNoteMessageBubble(attachment: attachment, otherUserId: otherUserId);
     }
 
     if (attachment.isImage) {
@@ -1096,6 +1221,510 @@ class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A round video message ("кружок") bubble: circular video, tap to
+/// decrypt-and-play. Same trust model/flow as [_VoiceMessageBubble] —
+/// the recording is fetched and decrypted on first tap (see
+/// [MessagesProvider.downloadDecryptedVideoNote]) into a local temp
+/// file, then handed to a dedicated [VideoPlayerController].
+class _VideoNoteMessageBubble extends StatefulWidget {
+  const _VideoNoteMessageBubble({required this.attachment, required this.otherUserId});
+
+  final MessageAttachment attachment;
+  final String otherUserId;
+
+  @override
+  State<_VideoNoteMessageBubble> createState() => _VideoNoteMessageBubbleState();
+}
+
+class _VideoNoteMessageBubbleState extends State<_VideoNoteMessageBubble> {
+  static const _size = 220.0;
+
+  VideoPlayerController? _controller;
+  bool _loading = false;
+  bool _playing = false;
+  bool _failed = false;
+  Duration _position = Duration.zero;
+  Duration? _totalDuration;
+
+  @override
+  void dispose() {
+    _controller?.removeListener(_onControllerUpdate);
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  /// Mirrors the controller's playing/position state into this widget,
+  /// and — since [VideoPlayerController] has no built-in "completed"
+  /// event — detects end-of-clip itself and rewinds to the start
+  /// (same behavior as [_VoiceMessageBubble]'s completion handling).
+  void _onControllerUpdate() {
+    final controller = _controller;
+    if (controller == null || !mounted) return;
+    final value = controller.value;
+    final duration = value.duration;
+    if (duration > Duration.zero && value.position >= duration) {
+      controller.pause();
+      controller.seekTo(Duration.zero);
+      setState(() {
+        _playing = false;
+        _position = Duration.zero;
+      });
+      return;
+    }
+    setState(() {
+      _playing = value.isPlaying;
+      _position = value.position;
+    });
+  }
+
+  Future<void> _toggle() async {
+    if (_failed) setState(() => _failed = false);
+    final controller = _controller;
+    if (controller != null) {
+      if (_playing) {
+        await controller.pause();
+      } else {
+        if (controller.value.position >= controller.value.duration) {
+          await controller.seekTo(Duration.zero);
+        }
+        await controller.play();
+      }
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final bytes = await context
+          .read<MessagesProvider>()
+          .downloadDecryptedVideoNote(widget.attachment.audioUrl, otherUserId: widget.otherUserId);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/video_note_${widget.attachment.id}.mp4');
+      await file.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      final newController = VideoPlayerController.file(file);
+      await newController.initialize();
+      await newController.setLooping(false);
+      newController.addListener(_onControllerUpdate);
+      _controller = newController;
+      _totalDuration = newController.value.duration;
+      await newController.play();
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(context.tr('video_message_playback_failed'))));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Scrubs to [fraction] (0..1) of the clip — same tap/drag-to-seek
+  /// pattern as [_VoiceMessageBubble._seekToFraction]. If nothing's
+  /// been loaded yet, loads and starts playback first (that also lands
+  /// on position zero), then jumps to the target.
+  Future<void> _seekToFraction(double fraction) async {
+    var controller = _controller;
+    if (controller == null) {
+      await _toggle();
+      controller = _controller;
+    }
+    if (controller == null || !controller.value.isInitialized) return;
+    final total = controller.value.duration;
+    if (total == Duration.zero) return;
+    final target = total * fraction.clamp(0.0, 1.0);
+    await controller.seekTo(target);
+    if (mounted) setState(() => _position = target);
+  }
+
+  /// Converts a touch point on the ring (relative to its own center)
+  /// into a clockwise-from-12-o'clock fraction and seeks there —
+  /// what makes the ring itself function as a scrub control.
+  void _seekFromRingTouch(Offset localPosition, double ringSize) {
+    final center = Offset(ringSize / 2, ringSize / 2);
+    final vector = localPosition - center;
+    if (vector.distance == 0) return;
+    final angle = (math.atan2(vector.dx, -vector.dy) + 2 * math.pi) % (2 * math.pi);
+    _seekToFraction(angle / (2 * math.pi));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    final initialized = controller != null && controller.value.isInitialized;
+    final total = _totalDuration ?? Duration(seconds: widget.attachment.durationSeconds);
+    final progress =
+        total.inMilliseconds == 0 ? 0.0 : (_position.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+    const ringStroke = 4.0;
+    const ringGap = 6.0;
+    const outerSize = _size + (ringGap + ringStroke) * 2;
+
+    return SizedBox(
+      width: outerSize,
+      height: outerSize,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // The ring itself — background track + white progress arc,
+          // drawn just outside the video circle.
+          IgnorePointer(
+            child: CustomPaint(
+              size: const Size(outerSize, outerSize),
+              painter: _RingProgressPainter(progress: progress, strokeWidth: ringStroke),
+            ),
+          ),
+          // Donut-shaped hit area (excludes the video circle in the
+          // middle) — tap or drag anywhere on the ring to scrub.
+          ClipPath(
+            clipper: _DonutClipper(innerRadius: _size / 2, outerRadius: outerSize / 2),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (details) => _seekFromRingTouch(details.localPosition, outerSize),
+              onPanStart: (details) => _seekFromRingTouch(details.localPosition, outerSize),
+              onPanUpdate: (details) => _seekFromRingTouch(details.localPosition, outerSize),
+              child: const SizedBox(width: outerSize, height: outerSize),
+            ),
+          ),
+          // The video circle — tap to play/pause. Clipped to a circle
+          // (not just visually but for hit-testing too) so it doesn't
+          // steal touches from the ring in its bounding box's corners.
+          ClipOval(
+            child: GestureDetector(
+              onTap: _loading ? null : _toggle,
+              child: SizedBox(
+                width: _size,
+                height: _size,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Container(
+                      width: _size,
+                      height: _size,
+                      color: Colors.black,
+                      child: initialized
+                          ? FittedBox(
+                              fit: BoxFit.cover,
+                              child: SizedBox(
+                                width: controller.value.size.width,
+                                height: controller.value.size.height,
+                                child: VideoPlayer(controller),
+                              ),
+                            )
+                          : null,
+                    ),
+                    if (_loading)
+                      const CircularProgressIndicator(color: Colors.white)
+                    else if (_failed)
+                      const Icon(Icons.error_outline, color: Colors.white, size: 40)
+                    else if (!_playing)
+                      Container(
+                        width: 56,
+                        height: 56,
+                        decoration: const BoxDecoration(color: Colors.black38, shape: BoxShape.circle),
+                        child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 32),
+                      ),
+                    Positioned(
+                      bottom: 12,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.lock, size: 11, color: Colors.white70),
+                          const SizedBox(width: 3),
+                          Text(
+                            formatDuration(controller != null ? _position : total),
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Paints the scrub ring around a [_VideoNoteMessageBubble]: a dim
+/// full-circle track plus a solid white arc for [progress] (0..1),
+/// swept clockwise starting at 12 o'clock.
+class _RingProgressPainter extends CustomPainter {
+  const _RingProgressPainter({required this.progress, required this.strokeWidth});
+  final double progress;
+  final double strokeWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.shortestSide - strokeWidth) / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = Colors.white24
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth,
+    );
+
+    if (progress > 0) {
+      canvas.drawArc(
+        rect,
+        -math.pi / 2,
+        2 * math.pi * progress.clamp(0.0, 1.0),
+        false,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RingProgressPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.strokeWidth != strokeWidth;
+}
+
+/// Clips hit-testing (and, if ever painted directly, rendering) to a
+/// donut between [innerRadius] and [outerRadius] — used so the ring's
+/// [GestureDetector] only responds to touches on the ring itself, not
+/// the video circle sitting inside it.
+class _DonutClipper extends CustomClipper<Path> {
+  const _DonutClipper({required this.innerRadius, required this.outerRadius});
+  final double innerRadius;
+  final double outerRadius;
+
+  @override
+  Path getClip(Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    return Path()
+      ..addOval(Rect.fromCircle(center: center, radius: outerRadius))
+      ..addOval(Rect.fromCircle(center: center, radius: innerRadius))
+      ..fillType = PathFillType.evenOdd;
+  }
+
+  @override
+  bool shouldReclip(covariant _DonutClipper oldClipper) =>
+      oldClipper.innerRadius != innerRadius || oldClipper.outerRadius != outerRadius;
+}
+
+/// Full-screen recorder for round video messages ("кружки"), pushed by
+/// ChatScreen._openVideoNoteRecorder. Records a short front-camera clip
+/// (capped at [_maxDuration]) and pops back with `(localFilePath,
+/// durationSeconds)` on success, or `null` if cancelled. The clip is
+/// still plaintext on disk at this point — encryption happens right
+/// before upload, in YandexStorageApiService.uploadChatVideoNote (same
+/// as voice notes).
+class _VideoNoteRecorderScreen extends StatefulWidget {
+  const _VideoNoteRecorderScreen();
+
+  @override
+  State<_VideoNoteRecorderScreen> createState() => _VideoNoteRecorderScreenState();
+}
+
+class _VideoNoteRecorderScreenState extends State<_VideoNoteRecorderScreen> {
+  static const _maxDuration = Duration(seconds: 60);
+  static const _previewSize = 260.0;
+
+  CameraController? _controller;
+  bool _initializing = true;
+  bool _unavailable = false;
+  bool _recording = false;
+  DateTime? _startedAt;
+  Timer? _ticker;
+  Duration _elapsed = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      final cameras = await availableCameras();
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+      final controller = CameraController(camera, ResolutionPreset.medium, enableAudio: true);
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _initializing = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() { _initializing = false; _unavailable = true; });
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleRecording() async {
+    final controller = _controller;
+    if (controller == null) return;
+    if (_recording) {
+      await _stopAndReturn();
+      return;
+    }
+    try {
+      await controller.startVideoRecording();
+      if (!mounted) return;
+      setState(() {
+        _recording = true;
+        _startedAt = DateTime.now();
+        _elapsed = Duration.zero;
+      });
+      _ticker = Timer.periodic(const Duration(milliseconds: 200), (_) {
+        if (!mounted) return;
+        final elapsed = DateTime.now().difference(_startedAt!);
+        setState(() => _elapsed = elapsed);
+        if (elapsed >= _maxDuration) _stopAndReturn();
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(context.tr('camera_permission_denied'))));
+      }
+    }
+  }
+
+  Future<void> _stopAndReturn() async {
+    _ticker?.cancel();
+    final controller = _controller;
+    if (controller == null || !controller.value.isRecordingVideo) return;
+    try {
+      final file = await controller.stopVideoRecording();
+      final elapsed = _elapsed;
+      if (mounted) setState(() => _recording = false);
+      if (elapsed.inSeconds < 1) {
+        // Too short to be a real message — discard, same rule as voice.
+        try {
+          await File(file.path).delete();
+        } catch (_) {}
+        return;
+      }
+      if (mounted) Navigator.of(context).pop((file.path, elapsed.inSeconds));
+    } catch (_) {
+      if (mounted) setState(() => _recording = false);
+    }
+  }
+
+  Future<void> _cancel() async {
+    _ticker?.cancel();
+    final controller = _controller;
+    if (controller != null && controller.value.isRecordingVideo) {
+      try {
+        final file = await controller.stopVideoRecording();
+        try {
+          await File(file.path).delete();
+        } catch (_) {}
+      } catch (_) {}
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Spacer(),
+            if (_initializing)
+              const CircularProgressIndicator(color: Colors.white)
+            else if (controller == null || _unavailable)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  context.tr('camera_permission_denied'),
+                  style: const TextStyle(color: Colors.white),
+                  textAlign: TextAlign.center,
+                ),
+              )
+            else
+              ClipOval(
+                child: SizedBox(
+                  width: _previewSize,
+                  height: _previewSize,
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: controller.value.previewSize?.height ?? _previewSize,
+                      height: controller.value.previewSize?.width ?? _previewSize,
+                      child: CameraPreview(controller),
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
+            if (_recording)
+              Text(
+                formatDuration(_elapsed),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 32),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(
+                    onPressed: _cancel,
+                    icon: const Icon(Icons.close, color: Colors.white, size: 32),
+                  ),
+                  GestureDetector(
+                    onTap: controller == null ? null : _toggleRecording,
+                    child: Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 4),
+                      ),
+                      padding: const EdgeInsets.all(6),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        decoration: BoxDecoration(
+                          shape: _recording ? BoxShape.rectangle : BoxShape.circle,
+                          borderRadius: _recording ? BorderRadius.circular(6) : null,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 48),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              context.tr('hold_to_record_video'),
+              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+          ],
         ),
       ),
     );

@@ -357,6 +357,40 @@ class MessagesProvider extends ChangeNotifier {
     return api.downloadChatVoice(audioUrl, otherUserId: otherUserId);
   }
 
+  /// Uploads [localVideoPath] and returns a [MessageAttachment.videoNote]
+  /// ready to send — a round video message ("кружок") encrypted
+  /// client-side exactly like [uploadVoiceAttachment] (see
+  /// [YandexStorageApiService.uploadChatVideoNote]). Only supported
+  /// against [YandexStorageApiService], same restriction as
+  /// [uploadImageAttachment]/[uploadVoiceAttachment].
+  Future<MessageAttachment> uploadVideoNoteAttachment(
+    String localVideoPath, {
+    required String recipientId,
+    required int durationSeconds,
+  }) async {
+    final api = _api;
+    if (api is! YandexStorageApiService) {
+      throw StateError('Sending video messages isn\'t supported on this backend');
+    }
+    final url = await api.uploadChatVideoNote(localVideoPath, recipientId: recipientId);
+    return MessageAttachment.videoNote(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      audioUrl: url,
+      durationSeconds: durationSeconds,
+    );
+  }
+
+  /// Downloads and decrypts a [MessageAttachment.videoNote]'s recording,
+  /// returning the raw playable video bytes. Same semantics as
+  /// [downloadDecryptedVoice].
+  Future<Uint8List> downloadDecryptedVideoNote(String videoUrl, {required String otherUserId}) async {
+    final api = _api;
+    if (api is! YandexStorageApiService) {
+      throw StateError('Video messages aren\'t supported on this backend');
+    }
+    return api.downloadChatVideoNote(videoUrl, otherUserId: otherUserId);
+  }
+
   /// Developer-only, Yandex Storage-only (see [uploadImageAttachment]
   /// above for why this doesn't live on [ApiService]): wipes every
   /// direct-message conversation for every user, text and attachments

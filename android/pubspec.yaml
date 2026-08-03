@@ -1,0 +1,128 @@
+name: audio_player_app
+description: "flutter audio player with back playback and back on the flut"
+publish_to: 'none'
+version: 1.5.0+4
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # State management
+  provider: ^6.1.2
+
+  # Audio playback + background/lock-screen controls, including a custom
+  # notification with a real repeat button (see harmony_audio_handler.dart)
+  just_audio: ^0.9.40
+  audio_service: ^0.18.15
+  audio_session: ^0.1.21
+  rxdart: ^0.27.7
+
+  # Local storage / cache (recently played, tokens, settings)
+  shared_preferences: ^2.2.3
+
+  # Filesystem paths for on-device track caching (offline playback)
+  path_provider: ^2.1.4
+
+  # Networking — used to talk directly to Yandex Object Storage's
+  # S3-compatible API (see lib/services/yandex_storage_api_service.dart).
+  http: ^1.2.1
+
+  # HMAC-SHA256 for signing requests to Yandex Object Storage (AWS SigV4).
+  crypto: ^3.0.3
+
+  # Picking audio/cover files for the in-app developer uploader
+  file_picker: ^8.0.0+1
+
+  # System (phone-shade) notifications for new incoming direct messages —
+  # see lib/services/message_notification_service.dart. Local-notification
+  # based: this app has no server component (only Yandex Object Storage),
+  # so there's nothing to send a real FCM/APNs push — instead the app
+  # polls Yandex Storage while it's running and raises one of these itself.
+  flutter_local_notifications: ^18.0.1
+
+  # Disk-backed cache for network images (track/playlist covers, avatars) —
+  # without this, Image.network only caches in memory for the current app
+  # session, so covers get re-downloaded from scratch on every app restart
+  # and every time the in-memory cache evicts them during a long scroll.
+  cached_network_image: ^3.4.1
+
+  # Reads the running app's version/build number so it can be compared
+  # against the manifest published in Yandex Storage (see UpdateService).
+  package_info_plus: ^8.0.0
+
+  # Opens the downloaded APK with the system installer once an update has
+  # been fetched (see UpdateService.installApk). Requires the
+  # REQUEST_INSTALL_PACKAGES permission on Android — see the comment atop
+  # lib/services/update_service.dart for the manifest change this needs.
+  open_filex: ^4.5.0
+
+  # End-to-end encryption for direct messages: X25519 key agreement +
+  # AES-256-GCM (see lib/services/e2ee_service.dart). Pure-Dart, no native
+  # setup needed.
+  cryptography: ^2.7.0
+
+  # Stores this device's E2EE private key in the platform keystore/
+  # keychain (Android Keystore / iOS Keychain) instead of plain
+  # SharedPreferences — it must never leave the device.
+  flutter_secure_storage: ^9.2.2
+
+  # Saves chat image attachments straight to the device's Photos/Gallery
+  # (not just the app's cache) when the user taps "Save" on the
+  # full-screen image viewer. Handles the Android/iOS photo-library
+  # permission prompt internally.
+  gal: ^2.3.0
+
+  # Records voice messages for chat (see ChatScreen's mic button). The
+  # recording is encrypted client-side before upload — see
+  # YandexStorageApiService.uploadChatVoice / E2EEService.encryptBytes —
+  # so this package only ever handles the plaintext locally, never over
+  # the network.
+  # NOTE: must stay >=6.0.0 — 5.x resolves an incompatible
+  # record_linux/record_platform_interface combo (record_linux stuck on
+  # an old ABI that doesn't implement the newer platform interface),
+  # which fails compilation on EVERY platform, not just Linux, since the
+  # `record` meta-package pulls in all platform implementations
+  # unconditionally. 6.x fixed that pairing.
+  record: ^6.0.0
+
+  # Records round video messages ("кружки") for chat (see ChatScreen's
+  # camera button) — same trust model as voice notes: the recording is
+  # encrypted client-side before upload (see
+  # YandexStorageApiService.uploadChatVideoNote / E2EEService.encryptBytes)
+  # so this package only ever handles the plaintext locally.
+  camera: ^0.11.0+2
+
+  # Plays back decrypted round video messages inside the chat bubble
+  # (see ChatScreen's _VideoNoteMessageBubble). The voice-note player
+  # (just_audio) is audio-only, so video notes need their own player.
+  video_player: ^2.9.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+
+# --- App icon generation -----------------------------------------------
+# 1. Put your square photo/logo (at least 1024x1024 px, PNG) here:
+#      assets/icon/icon.png
+# 2. Run:
+#      flutter pub get
+#      flutter pub run flutter_launcher_icons
+#    This regenerates all Android/iOS icon sizes automatically.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  # Optional: adaptive icon for Android 8+ (nicer round/square masking)
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  adaptive_icon_background: "assets/icon/icon_background.png"

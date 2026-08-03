@@ -128,6 +128,7 @@ class YandexStorageApiService implements ApiService {
   static const _lyricsPrefix = 'media/lyrics/';
   static const _chatImagesPrefix = 'media/chat_images/';
   static const _chatVoicePrefix = 'media/chat_voice/';
+  static const _chatVideoNotePrefix = 'media/chat_video_note/';
   static const _maxRetries = 8;
   static const _maxAvatarBytes = 5 * 1024 * 1024;
   static const _maxBannerBytes = 10 * 1024 * 1024;
@@ -138,6 +139,9 @@ class YandexStorageApiService implements ApiService {
   // nonce + 16-byte GCM tag), but that's negligible next to this cap —
   // generous enough for several minutes of compressed audio.
   static const _maxVoiceBytes = 15 * 1024 * 1024;
+  // Round video messages are capped shorter (60s) than voice notes but
+  // carry picture data too, so the byte cap is generous accordingly.
+  static const _maxVideoNoteBytes = 40 * 1024 * 1024;
   // Any image format is accepted for playlist covers except GIF (avoids
   // animated covers rendering oddly in fixed-size artwork slots).
   static const _rejectedCoverExtensions = {'.gif'};
@@ -1374,6 +1378,7 @@ class YandexStorageApiService implements ApiService {
     // see the doc comment above.
     await _deleteAllObjectsWithPrefix(_chatImagesPrefix);
     await _deleteAllObjectsWithPrefix(_chatVoicePrefix);
+    await _deleteAllObjectsWithPrefix(_chatVideoNotePrefix);
 
     return messageCount;
   }
@@ -1910,6 +1915,82 @@ class YandexStorageApiService implements ApiService {
     final res = await http.get(Uri.parse(url));
     if (res.statusCode >= 400) {
       throw ApiException('Failed to download voice message (${res.statusCode})');
+    }
+    return E2EEService.instance.decryptBytes(
+      accountId: myId,
+      cipherBytes: res.bodyBytes,
+      otherPartyPublicKeyBase64: otherPublicKey,
+    );
+  }
+
+  /// Uploads a round video message ("кружок") recording and returns its
+  /// public URL. Identical scheme to [uploadChatVoice] — encrypted
+  /// client-side with [E2EEService.encryptBytes] using the same
+  /// per-conversation shared key as message text and voice notes,
+  /// BEFORE it ever leaves the device, so the (public-read) bucket only
+  /// ever holds opaque AES-256-GCM ciphertext. Deliberately NOT part of
+  /// [ApiService], for the same reason as [uploadChatVoice] — see
+  /// [MessagesProvider.uploadVideoNoteAttachment].
+  Future<String> uploadChatVideoNote(String localVideoPath, {required String recipientId}) async {
+    await _ensurePublicKeyPublished();
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final file = File(localVideoPath);
+    final sizeBytes = await file.length();
+    if (sizeBytes > _maxVideoNoteBytes) {
+      throw ApiException('Video message is too long');
+    }
+    final recipientPublicKey = await _publicKeyOf(recipientId);
+    if (recipientPublicKey == null) {
+      // Same rule as sendMessage/uploadChatVoice: never let a video
+      // message land unencrypted just because we don't have a key on
+      // file yet.
+      throw ApiException(
+        'This account can\'t receive encrypted messages yet — ask them to open Messages once first.',
+      );
+    }
+    final plainBytes = await file.readAsBytes();
+    final cipherBytes = await E2EEService.instance.encryptBytes(
+      accountId: myId,
+      plainBytes: plainBytes,
+      otherPartyPublicKeyBase64: recipientPublicKey,
+    );
+    final key = '$_chatVideoNotePrefix${_randomId()}.bin';
+    await _putObject(
+      key,
+      cipherBytes,
+      // Opaque ciphertext, not a playable video file — same reasoning
+      // as uploadChatVoice's contentType.
+      contentType: 'application/octet-stream',
+      publicRead: true,
+    );
+    final url = 'https://${config.endpointHost}/${config.bucket}/$key';
+    await _withCollection(_chatAttachmentsKey, (data) {
+      final items = data['items'] as List<dynamic>;
+      items.add({
+        'url': url,
+        'uploader_id': myId,
+        'created_at': DateTime.now().millisecondsSinceEpoch / 1000,
+      });
+      return null;
+    });
+    return url;
+  }
+
+  /// Downloads and decrypts a round video message previously uploaded
+  /// via [uploadChatVideoNote], returning the raw decrypted video bytes
+  /// ready to write to a local temp file and hand to a player. Same
+  /// semantics as [downloadChatVoice].
+  Future<Uint8List> downloadChatVideoNote(String url, {required String otherUserId}) async {
+    final me = await _currentUserRow();
+    final myId = me['id'] as String;
+    final otherPublicKey = await _publicKeyOf(otherUserId);
+    if (otherPublicKey == null) {
+      throw ApiException('Cannot decrypt this video message on this device');
+    }
+    final res = await http.get(Uri.parse(url));
+    if (res.statusCode >= 400) {
+      throw ApiException('Failed to download video message (${res.statusCode})');
     }
     return E2EEService.instance.decryptBytes(
       accountId: myId,

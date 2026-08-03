@@ -130,7 +130,9 @@ String _previewText(BuildContext context, String rawText) {
           ? context.tr('attachment_preview_track')
           : attachment.isVoice
               ? context.tr('attachment_preview_voice')
-              : context.tr('attachment_preview_playlist');
+              : attachment.isVideoNote
+                  ? context.tr('attachment_preview_video_note')
+                  : context.tr('attachment_preview_playlist');
   final caption = attachment.caption.trim();
   return caption.isEmpty ? label : '$label $caption';
 }

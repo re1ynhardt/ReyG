@@ -80,10 +80,33 @@ class MessageAttachment {
         playlistName = '',
         trackIds = const [];
 
+  /// A round video message ("кружок") recorded in a chat thread.
+  /// [audioUrl] points at the ENCRYPTED recording (see
+  /// `YandexStorageApiService.uploadChatVideoNote`) — exactly the same
+  /// scheme as [MessageAttachment.voice], just carrying video bytes
+  /// instead of audio: opaque AES-256-GCM ciphertext at rest and in
+  /// transit, decrypted client-side via
+  /// `YandexStorageApiService.downloadChatVideoNote` before playback.
+  /// Reuses the shared [audioUrl] field (like [image] reuses
+  /// [coverUrl]) rather than adding a video-only field, since it's
+  /// already exactly "the encrypted blob URL" every other type needs.
+  const MessageAttachment.videoNote({
+    required this.id,
+    required this.audioUrl,
+    required this.durationSeconds,
+    this.caption = '',
+  })  : type = _typeVideoNote,
+        title = '',
+        artist = '',
+        coverUrl = '',
+        playlistName = '',
+        trackIds = const [];
+
   static const _typeTrack = 'track';
   static const _typePlaylist = 'playlist';
   static const _typeImage = 'image';
   static const _typeVoice = 'voice';
+  static const _typeVideoNote = 'video_note';
 
   /// Leading marker that flags a [DirectMessage.text] as carrying an
   /// attachment payload rather than plain user-typed text. Uses a
@@ -115,6 +138,7 @@ class MessageAttachment {
   bool get isPlaylist => type == _typePlaylist;
   bool get isImage => type == _typeImage;
   bool get isVoice => type == _typeVoice;
+  bool get isVideoNote => type == _typeVideoNote;
 
   /// Returns a copy of this attachment with [caption] replaced — used by
   /// the composer to fold in whatever text was typed at send time.
@@ -135,6 +159,14 @@ class MessageAttachment {
     }
     if (isVoice) {
       return MessageAttachment.voice(
+        id: id,
+        audioUrl: audioUrl,
+        durationSeconds: durationSeconds,
+        caption: caption,
+      );
+    }
+    if (isVideoNote) {
+      return MessageAttachment.videoNote(
         id: id,
         audioUrl: audioUrl,
         durationSeconds: durationSeconds,
@@ -190,14 +222,22 @@ class MessageAttachment {
                     'duration_seconds': durationSeconds,
                     'caption': caption,
                   }
-                : {
-                    'type': type,
-                    'id': id,
-                    'name': playlistName,
-                    'cover_url': coverUrl,
-                    'track_ids': trackIds,
-                    'caption': caption,
-                  };
+                : isVideoNote
+                    ? {
+                        'type': type,
+                        'id': id,
+                        'video_url': audioUrl,
+                        'duration_seconds': durationSeconds,
+                        'caption': caption,
+                      }
+                    : {
+                        'type': type,
+                        'id': id,
+                        'name': playlistName,
+                        'cover_url': coverUrl,
+                        'track_ids': trackIds,
+                        'caption': caption,
+                      };
     return '$marker${jsonEncode(json)}';
   }
 
@@ -236,6 +276,13 @@ class MessageAttachment {
           return MessageAttachment.voice(
             id: json['id'] as String,
             audioUrl: json['audio_url'] as String? ?? '',
+            durationSeconds: (json['duration_seconds'] as num?)?.toInt() ?? 0,
+            caption: json['caption'] as String? ?? '',
+          );
+        case _typeVideoNote:
+          return MessageAttachment.videoNote(
+            id: json['id'] as String,
+            audioUrl: json['video_url'] as String? ?? '',
             durationSeconds: (json['duration_seconds'] as num?)?.toInt() ?? 0,
             caption: json['caption'] as String? ?? '',
           );
