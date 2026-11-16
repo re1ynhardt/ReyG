@@ -28,17 +28,17 @@ Future<void> main() async {
   // (e.g. --dart-define, or a secrets manager) before sharing this build.
   final ApiService api = YandexStorageApiService(
     const YandexStorageConfig(
-      accessKeyId: 'YCAJE0POvQbcWw9VSrNflht9s',
-      secretAccessKey: 'YCMtrMWWbFX6UB-_dO4VuNa2cAnIBZJvemoAkWic',
-      bucket: 'storagereyg',
-      developerEmails: {'ussr9covok@gmail.com'},
+      accessKeyId: 'не',
+      secretAccessKey: 'не',
+      bucket: 'не',
+      developerEmails: {'не'},
       // "Исполнитель" (performer/artist) accounts: can upload tracks,
       // delete tracks, and delete hashtags, but don't get the rest of the
       // developer-only surface. Add artist emails here.
-      performerEmails: {'anastasiyasklyarova3091@gmail.com'},
+      performerEmails: {'не'},
       // "Поддержка" (support) accounts: exactly the same rights as
       // developer accounts. Add support-staff emails here.
-      supportEmails: {'nubik2881@gmail.com', 'kitossnamba1@gmail.com'},
+      supportEmails: {'не'},
     ),
   );
 
